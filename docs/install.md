@@ -35,12 +35,23 @@ python scripts/build.py --input Domico_1.5.4.xapk `
 
 ## B. GitHub Actions で自動化する (公式更新検知 → 自動パッチ → Release)
 
-### 1) Secrets を登録
-`gen-keystore` の出力に従い、リポジトリの Settings → Secrets に登録:
-- `KEYSTORE_BASE64` : keystore を base64 化した文字列
-- `KEYSTORE_PASSWORD` : storepass
-- `KEY_PASSWORD` : keypass(storepass と同じなら省略可)
-- `KEY_ALIAS` : 例 `domico`
+### 1) 署名鍵の作成 + Secrets 登録（ワンショット）
+鍵作成と Secrets 登録をまとめて行う対話スクリプトを使う（`gh` 認証済みが前提）:
+
+```powershell
+# Windows (リポジトリ直下)
+powershell -ExecutionPolicy Bypass -File scripts/setup-signing.ps1
+```
+```bash
+# Linux / mac / Git-Bash / WSL
+bash scripts/setup-signing.sh
+```
+パスワードとエイリアスだけ入力すれば、`work/domico.keystore` を作成し、
+以下の Secrets を自動登録する: `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_PASSWORD` / `KEY_ALIAS`。
+確認: `gh secret list`
+
+> 手動で行う場合は `scripts/gen-keystore.*` の出力(base64)を Settings → Secrets に貼り付けてもよい。
+> keystore は紛失すると同一署名で更新版を出せなくなるため、必ずバックアップすること。
 
 ### 2) ワークフロー
 [`.github/workflows/patch.yml`](../.github/workflows/patch.yml):
