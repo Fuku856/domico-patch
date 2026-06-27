@@ -1,4 +1,4 @@
-# 署名鍵の作成 と GitHub Secrets 登録 をまとめて行う対話スクリプト (Windows / PowerShell)
+﻿# 署名鍵の作成 と GitHub Secrets 登録 をまとめて行う対話スクリプト (Windows / PowerShell)
 #
 # やること:
 #   1) 署名用 keystore を作成 (既にあれば再利用)
