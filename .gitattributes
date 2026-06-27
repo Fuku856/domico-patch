@@ -1,0 +1,8 @@
+# PowerShell スクリプトは Windows PowerShell 5.1 が BOM 無し UTF-8 を
+# Shift-JIS と誤認するため、UTF-8(BOM) を付けてコミットしている。
+# eol=crlf で改行も CRLF を維持（BOM 自体はファイル先頭バイトとして保持される）。
+*.ps1 text eol=crlf
+
+# シェルスクリプトは LF を維持
+*.sh text eol=lf
+

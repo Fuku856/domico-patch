@@ -1,0 +1,31 @@
+# --- 著作物バイナリ（コミット禁止） ---
+*.apk
+*.xapk
+*.apks
+*.aab
+
+# --- 署名鍵・機密（コミット禁止） ---
+*.keystore
+*.jks
+*.p12
+*.pem
+keystore.properties
+*.b64
+
+# --- ビルド/作業ディレクトリ ---
+build/
+work/
+out/
+dist/
+decompiled/
+# 取得した apktool.jar / jadx などの外部ツール
+tools/
+*.aligned.apk
+*.signed.apk
+
+# --- OS / エディタ ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
