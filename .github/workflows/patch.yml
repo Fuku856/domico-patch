@@ -87,16 +87,17 @@ jobs:
       - name: Check latest version (apkeep -l, APK本体は落とさない)
         id: check
         run: |
-          # まず -l で「利用可能バージョンだけ」取得し、既存 Release と比較する。
-          # 既に公開済みのバージョンならフルダウンロード(~40MB)を丸ごと省略する。
-          apkeep -a "${PACKAGE}" -d google-play \
-            -e "${{ secrets.GOOGLE_EMAIL }}" -t "${{ secrets.GOOGLE_AAS_TOKEN }}" \
-            --accept-tos -l > apkeep_list.log 2>&1 || true
+          # APKPure の版一覧で「最新バージョンだけ」軽量取得し、既存 Release と比較する。
+          # 既に公開済みなら Play からのフルダウンロード(~40MB)を丸ごと省略する。
+          # ※ Google Play ソースの -l は版番号を返さない("does not make old versions
+          #   available")ため、版一覧を返す APKPure を版検知の軽量プローブに使う。
+          #   認証不要なので Play アカウントにも触れない。実体の取得は従来どおり Play。
+          # ※ APKPure は Play より反映が遅れることがある(取りこぼしではなく遅延方向)。
+          apkeep -a "${PACKAGE}" -d apk-pure -l > apkeep_list.log 2>&1 || true
           echo "--- apkeep -l output ---"; cat apkeep_list.log
-          # バージョン番号(x.y / x.y.z…)を抽出。`| 1.5.4` 形式の行を優先し、無ければ全体から拾う。
-          VN=$(grep -oE '^\s*\|\s*[0-9]+\.[0-9]+[0-9.]*' apkeep_list.log \
-                 | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1 || true)
-          [ -z "$VN" ] && VN=$(grep -oE '[0-9]+\.[0-9]+[0-9.]*' apkeep_list.log | head -1 || true)
+          # 一覧は昇順カンマ区切り(例: | 1.3.2, ..., 1.5.4)。最新は末尾なので
+          # 版トークンを全部拾って version sort し、最大(=最新)を採用する。
+          VN=$(grep -oE '[0-9]+\.[0-9]+[0-9.]*' apkeep_list.log | sort -V | tail -1 || true)
           if [ -z "$VN" ]; then
             # 取れなかった時は安全側(=処理続行)に倒す。誤って更新を取りこぼさない。
             echo "::warning::apkeep -l からバージョンを特定できませんでした。フルダウンロードにフォールバックします。"
