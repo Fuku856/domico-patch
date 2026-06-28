@@ -18,7 +18,7 @@
 
 .field static currentActivity:Ljava/lang/ref/WeakReference;
 
-.field static handler:Landroid/os/Handler;
+.field static volatile handler:Landroid/os/Handler;
 
 .field static final INSTANCE:Lvn/com/bravesoft/androidapp/patch/PatchLoadingState;
 

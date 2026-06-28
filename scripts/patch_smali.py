@@ -23,6 +23,7 @@ Domico 非公式パッチ群の smali 適用スクリプト。
     例) python scripts/patch_smali.py work/base
 """
 
+import argparse
 import os
 import re
 import shutil
@@ -99,9 +100,15 @@ def method_bounds(lines, sig_prefix):
 def patch_assets(base_dir, check_only, patch_version):
     if not os.path.isdir(ASSET_DIR):
         return False, False, f"asset dir missing: {ASSET_DIR}"
+    # AlertUtils と同じ dex シャードにヘルパーを配置する。
+    # AlertUtils が別シャードへ移動しても ART はクロス dex 参照を解決できるが、
+    # 予期せぬシャードへの配置はログで可視化する。
     smali_root, _ = find_smali_dir(base_dir, REL_ALERTUTILS)
     if not smali_root:
         return False, False, "classes4 smali root (AlertUtils) not found for asset placement"
+    shard_name = os.path.basename(smali_root)
+    if shard_name not in ("smali", "smali_classes4"):
+        log(f"WARNING: placing patch assets into {shard_name} (expected smali_classes4); AlertUtils may have moved dex shards")
     if check_only:
         n = sum(1 for _r, _d, fs in os.walk(ASSET_DIR) for f in fs if f.endswith(".smali"))
         return True, False, f"would place {n} helper class(es) into {os.path.basename(smali_root)} [dry-run]"
@@ -224,12 +231,28 @@ def patch_frameloading(base_dir, check_only):
     lines = read_lines(path)
     if M_LOADING in "".join(lines):
         return True, False, "already patched - skipped"
+    # メソッド境界内で探すことで、将来 setClickable が複数メソッドに増えても
+    # 最初に見つかったメソッド内の呼び出しのみにパッチを当てる。
     anchor = indent = val = None
-    for j, ln in enumerate(lines):
-        m = SETCLICKABLE_RE.match(ln)
-        if m:
-            anchor, indent, val = j, m.group(1), m.group(3)
-            break
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith(".method"):
+            ms, me = i, None
+            for j in range(ms + 1, len(lines)):
+                if lines[j].startswith(".end method"):
+                    me = j
+                    break
+            if me is not None:
+                for j in range(ms, me + 1):
+                    m = SETCLICKABLE_RE.match(lines[j])
+                    if m:
+                        anchor, indent, val = j, m.group(1), m.group(3)
+                        break
+                if anchor is not None:
+                    break
+                i = me + 1
+                continue
+        i += 1
     if anchor is None:
         return False, False, "anchor RelativeLayout->setClickable(Z)V not found"
     if check_only:
@@ -311,7 +334,13 @@ def patch_menufragment(base_dir, check_only):
         return False, False, "return-void not found in MenuFragment.init"
     if check_only:
         return True, False, "would inject settings entry into MenuFragment.init [dry-run]"
-    # メソッド末尾(return-void 直前)では全 register が dead のため v0 を再利用できる。
+    # v0 が有効なレジスタであることを保証: .locals が 0 なら 1 に引き上げる。
+    for j in range(start, end + 1):
+        lm = re.match(r"^(\s*)\.locals\s+(\d+)\s*$", lines[j])
+        if lm:
+            if int(lm.group(2)) < 1:
+                lines[j] = f"{lm.group(1)}.locals 1\n"
+            break
     inj = [
         f"{indent}{M_MENU}\n",
         f"{indent}iget-object v0, p0, Lvn/com/bravesoft/androidapp/ui/MenuFragment;->binding:Lvn/com/bravesoft/androidapp/databinding/MenuLayoutBinding;\n",
@@ -335,27 +364,27 @@ PATCHES = [
 
 
 def main():
-    argv = sys.argv[1:]
-    check_only = False
-    patch_version = None
-    if "--check" in argv:
-        check_only = True
-        argv.remove("--check")
-    if "--patch-version" in argv:
-        i = argv.index("--patch-version")
-        if i + 1 >= len(argv):
-            print("ERROR: --patch-version requires a value", file=sys.stderr)
-            sys.exit(2)
-        patch_version = argv[i + 1]
-        del argv[i : i + 2]
-    if len(argv) != 1:
-        print(__doc__)
-        sys.exit(2)
-    base_dir = argv[0]
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument("base_dir", help="baksmali 展開済みディレクトリ")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="dry-run: パッチ可否のみ判定、ファイルを書かない",
+    )
+    ap.add_argument(
+        "--patch-version",
+        help="PatchInfo.VERSION に埋め込むバージョン文字列",
+    )
+    args = ap.parse_args()
+    check_only = args.check
+    patch_version = args.patch_version
+    base_dir = args.base_dir
     mode = "CHECK" if check_only else "PATCH"
     if not os.path.isdir(base_dir):
-        print(f"ERROR: not a directory: {base_dir}", file=sys.stderr)
-        sys.exit(2)
+        ap.error(f"not a directory: {base_dir}")
 
     failed = False
     for name, fn in PATCHES:
