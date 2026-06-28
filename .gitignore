@@ -20,8 +20,14 @@ dist/
 decompiled/
 # 取得した apktool.jar / jadx などの外部ツール
 tools/
+apkeep
+apkeep.exe
 *.aligned.apk
 *.signed.apk
+
+# --- Python ---
+__pycache__/
+*.pyc
 
 # --- OS / エディタ ---
 .DS_Store

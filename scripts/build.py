@@ -136,6 +136,7 @@ def main():
     ap.add_argument("--key-pass")
     ap.add_argument("--alias", required=True)
     ap.add_argument("--min-sdk", default="26")
+    ap.add_argument("--app-version", help="versionName。.apks 同梱物の命名に使用")
     ap.add_argument("--install", action="store_true", help="adb install-multiple まで実行")
     args = ap.parse_args()
 
@@ -194,10 +195,21 @@ def main():
 
     run([apksigner, "verify", "--min-sdk-version", args.min_sdk, signed_paths[0]])
 
-    # 配布は個別 .apk（Release に添付）。まとめ zip は作らない。
+    # 個別 .apk はローカルの adb install-multiple 用に work/out へ残す。
     log("signed splits: " + ", ".join(os.path.basename(p) for p in signed_paths))
-    log("install: adb install-multiple --no-incremental -r " +
+    log("install (adb): adb install-multiple --no-incremental -r " +
         " ".join(os.path.basename(p) for p in signed_paths))
+
+    # 配布物: 全スプリットをバイト維持のまま 1 つの .apks(zip) に同梱する。
+    # resources.arsc を作り直さないので HyperOS 等の INSTALL_FAILED_USER_RESTRICTED を
+    # 回避できる。インストールは SAI / Shizuku 等の分割対応インストーラでこの 1 ファイルを選ぶ。
+    ver = args.app_version.strip() if args.app_version else None
+    archive_name = f"domico-{ver}-patch.apks" if ver else "domico-patch.apks"
+    archive = os.path.join(args.out, archive_name)
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as z:
+        for p in signed_paths:
+            z.write(p, os.path.basename(p))
+    log(f"bundled .apks: {archive_name} ({len(signed_paths)} splits)")
 
     if args.install:
         adb = shutil.which("adb") or "adb"

@@ -42,7 +42,7 @@ set "adb=%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"
 
 [`.github/workflows/patch.yml`](../.github/workflows/patch.yml):
 - 毎日 公式更新を検知し、Google Play（`locale=ja_JP`）で取得する。
-- dex 差し替えパッチ + 再署名し、個別 `.apk` を Release に添付する。
+- dex 差し替えパッチ + 再署名し、全スプリットを1つにまとめた `domico-<version>-patch.apks` を Release に添付する。
 - `workflow_dispatch` で手動実行も可（`force=true` で同一版でも再ビルド）。
 
 ### 必要な Secrets
@@ -68,7 +68,9 @@ Google Play 取得用:
 > 取得できる密度・ABI は apkeep の既定デバイスプロファイル依存。端末に完全一致させたい場合は A（端末 pull）を使う。
 
 ### 取得・インストール
-Releases の `*.apk` を全部取得し、上記「インストール」と同様に install-multiple する。
+Releases の `domico-<version>-patch.apks`（分割APKを1つにまとめたもの）を取得し、SAI / Shizuku 等の分割対応インストーラでこの 1 ファイルを選んで入れる。日本語（`config.ja`）も同梱済み。
+- adb で入れる場合は `.apks` を unzip し、出てきた `*.apk` を `adb install-multiple --no-incremental -r` する。
+- 公式版とは署名が異なるため、初回は公式版のアンインストールが必要。
 
 ## 注意（ToS / 法務）
 - ミラー / Play からの自動ダウンロードは各サービスの規約上グレー。利用は自己判断。

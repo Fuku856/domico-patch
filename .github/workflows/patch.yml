@@ -1,8 +1,8 @@
 name: Patch Domico (auto)
 
 # 公式 Domico の更新を検知し、APK を取得して B案パッチ(起動時ログイン通知の
-# タッチ遮断解除)を classes4.dex 差し替えで適用・再署名し、個別 .apk を
-# Release に添付する。手動実行も可。
+# タッチ遮断解除)を classes4.dex 差し替えで適用・再署名し、全スプリットを1つに
+# まとめた .apks を Release に添付する。手動実行も可。
 #
 # 重要: パッチは apktool 全体リビルドではなく「classes4.dex のみ差し替え」方式
 #       (resources.arsc / AndroidManifest はバイト維持)。apktool で作り直すと
@@ -137,20 +137,25 @@ jobs:
             --keystore work_keystore.jks \
             --ks-pass "${{ secrets.KEYSTORE_PASSWORD }}" \
             --key-pass "${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}" \
-            --alias "${{ secrets.KEY_ALIAS }}"
+            --alias "${{ secrets.KEY_ALIAS }}" \
+            --app-version "${{ steps.ver.outputs.vn }}"
 
-      - name: Publish Release (attach individual .apk)
+      - name: Publish Release (attach single .apks bundle)
         if: steps.ver.outputs.exists == 'false' || inputs.force
         run: |
+          # gh release create は --clobber 非対応 & 既存タグだと失敗するため、
+          # force 再実行に備えて既存 Release があれば削除してから作り直す(タグは残す)。
+          gh release delete "${{ steps.ver.outputs.tag }}" --yes 2>/dev/null || true
           gh release create "${{ steps.ver.outputs.tag }}" \
-            work/out/*.apk \
+            work/out/domico-${{ steps.ver.outputs.vn }}-patch.apks \
             --title "Domico ${{ steps.ver.outputs.vn }} (patched: login-toast click-through)" \
             --notes "公式 ${{ steps.ver.outputs.vn }} (versionCode ${{ steps.ver.outputs.vc }}) に B案パッチ(起動時ログイン通知のタッチ遮断解除)を classes4.dex 差し替えで適用し再署名したものです。日本語スプリット(config.ja): ${{ steps.ver.outputs.has_ja != '' && '含む' || '未検出(要確認)' }}
 
-インストール: 添付の全 .apk をまとめて入れてください(分割APK)。
-  adb install-multiple --no-incremental -r <添付の全 .apk>
-公式版とは署名が異なるため、初回は公式版のアンインストールが必要です。" \
-            --clobber
+添付の domico-${{ steps.ver.outputs.vn }}-patch.apks は分割APK(base + config 群)を1つにまとめたものです。
+
+インストール: SAI / Shizuku 等の分割対応インストーラで、この .apks を選んで入れてください。
+公式版とは署名が異なるため、初回は公式版のアンインストールが必要です。
+(adb で入れる場合: .apks を unzip し adb install-multiple --no-incremental -r *.apk)"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
