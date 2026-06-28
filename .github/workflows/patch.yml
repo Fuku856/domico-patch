@@ -102,8 +102,9 @@ jobs:
             if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
           done
           if [ -z "$BASE" ]; then echo "::error::probe base apk (with dex) not found"; exit 1; fi
-          VN=$("$AAPT" dump badging "$BASE" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
-          VC=$("$AAPT" dump badging "$BASE" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+          BADGING=$("$AAPT" dump badging "$BASE")
+          VN=$(echo "$BADGING" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          VC=$(echo "$BADGING" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
           echo "vn=$VN" >> "$GITHUB_OUTPUT"
           echo "vc=$VC" >> "$GITHUB_OUTPUT"
           echo "tag=v${VN}-patch" >> "$GITHUB_OUTPUT"
@@ -119,11 +120,31 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify patch still applies (dry-run, ビルド前検査)
+        if: steps.check.outputs.new == 'true' || inputs.force
+        run: |
+          # probe/ の base APK を再利用してパッチ可否を先に検査する。
+          # dry-run が通った後にのみ全スプリットを取得することで、
+          # パッチ非対応版でも ~80MB の無駄ダウンロードを回避できる。
+          set -o pipefail
+          BASE=""
+          for f in probe/*.apk; do
+            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
+          done
+          if [ -z "$BASE" ]; then echo "::error::probe base apk (with dex) not found for dry-run"; exit 1; fi
+          if ! python3 scripts/patch_apk.py --in "$BASE" --check 2>&1 | tee patch_check.log; then
+            echo "::error::パッチ対象コードが変化しました(${{ steps.check.outputs.vn }})。" \
+                 "patch_check.log の FAIL 行で該当クラスを確認し、smali を手動修正してください。" \
+                 "パッチ未適用のため Release は作成しません。"
+            exit 1
+          fi
+          echo "patch dry-run OK: 現行パッチは ${{ steps.check.outputs.vn }} に適用可能"
+
       - name: Download splits (Google Play, 日本語含む)
         if: steps.check.outputs.new == 'true' || inputs.force
         run: |
           rm -rf download && mkdir -p download
-          # 新版検知時のみ、ビルドに必要な全スプリット(base + config 群)を取得する。
+          # dry-run 通過後に、ビルドに必要な全スプリット(base + config 群)を取得する。
           # locale=ja_JP で日本語スプリット(config.ja)を含める。split_apk=1 で分割取得。
           apkeep -a "${PACKAGE}" -d google-play \
             -e "${{ secrets.GOOGLE_EMAIL }}" -t "${{ secrets.GOOGLE_AAS_TOKEN }}" \
@@ -133,26 +154,17 @@ jobs:
           find download -mindepth 2 -name '*.apk' -exec mv -t download/ {} + 2>/dev/null || true
           echo "--- downloaded ---"
           ls -la download/
-
-      - name: Verify patch still applies (dry-run, ビルド前検査)
-        if: steps.check.outputs.new == 'true' || inputs.force
-        run: |
-          # 公式更新でパッチ対象コード(AlertUtils.displayToastContract 内の clearFlags
-          # アンカー)が変化していないかを、実ビルド前に dry-run で検査する。
-          # 変化していれば patch_apk.py --check が非0で落ち、ここでエラーログに記録して停止。
-          BASE=""
+          # probe と splits で取得バージョンが一致するか確認(ロールアウト競合の検知)
+          AAPT=$(ls $ANDROID_SDK_ROOT/build-tools/*/aapt2 | head -1)
           for f in download/*.apk; do
-            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
+            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then
+              VN_DL=$("$AAPT" dump badging "$f" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+              if [ "$VN_DL" != "${{ steps.check.outputs.vn }}" ]; then
+                echo "::warning::Play バージョン不一致: probe=${{ steps.check.outputs.vn }}, splits=$VN_DL — タグと artifact のバージョンが食い違う可能性があります。"
+              fi
+              break
+            fi
           done
-          if [ -z "$BASE" ]; then echo "::error::base apk (with dex) not found"; exit 1; fi
-          set -o pipefail
-          if ! python3 scripts/patch_apk.py --in "$BASE" --check 2>&1 | tee patch_check.log; then
-            echo "::error::パッチ対象コードが変化しました(${{ steps.check.outputs.vn }})。" \
-                 "AlertUtils.displayToastContract / clearFlags アンカーを手動確認してください。" \
-                 "詳細は patch_check.log。パッチ未適用のため Release は作成しません。"
-            exit 1
-          fi
-          echo "patch dry-run OK: 現行パッチは ${{ steps.check.outputs.vn }} に適用可能"
 
       - name: Restore keystore
         if: steps.check.outputs.new == 'true' || inputs.force

@@ -76,6 +76,10 @@ def main():
         help="パッチ可否のみ dry-run 検査(dex差し替え/出力はしない)。"
         "公式更新でパッチ対象が変化したかを実ビルド前に検知する。",
     )
+    ap.add_argument(
+        "--patch-version",
+        help="設定画面フッターに埋め込むパッチバージョン文字列。",
+    )
     args = ap.parse_args()
     if not args.check and not args.out:
         ap.error("--out is required unless --check")
@@ -116,14 +120,17 @@ def main():
         p = subprocess.run([sys.executable, patch_smali, "--check", work])
         if p.returncode != 0:
             raise SystemExit(
-                "patch dry-run FAILED: パッチ対象コード(AlertUtils.displayToastContract の "
-                "clearFlags アンカー)が変化しています。手動での smali 修正が必要です。"
+                "patch dry-run FAILED: パッチ対象コードが変化しています。"
+                "上記の FAIL 行で該当クラスを確認し、smali を手動修正してください。"
             )
         log("patch dry-run OK: 現行パッチは適用可能です(コード変化なし)")
         return
 
     # 既存の patch_smali.py を流用(冪等・アンカー基準)
-    run([sys.executable, patch_smali, work])
+    patch_cmd = [sys.executable, patch_smali, work]
+    if args.patch_version:
+        patch_cmd[2:2] = ["--patch-version", args.patch_version]
+    run(patch_cmd)
 
     dex_out = os.path.join(work, "patched.dex")
     run([java, "-jar", args.smali, "a", "-a", args.api, "-o", dex_out, smali_dir])
