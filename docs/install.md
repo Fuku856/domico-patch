@@ -45,25 +45,9 @@ set "adb=%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"
 - dex 差し替えパッチ + 再署名し、全スプリットを1つにまとめた `domico-<version>-patch.apks` を Release に添付する。
 - `workflow_dispatch` で手動実行も可（`force=true` で同一版でも再ビルド）。
 
-### 必要な Secrets
-keystore 系（`setup-signing.*` で登録可）:
-- `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_PASSWORD` / `KEY_ALIAS`
-
-Google Play 取得用:
-- `GOOGLE_EMAIL` … Google アカウントのメール
-- `GOOGLE_AAS_TOKEN` … そのアカウントの AAS トークン
-
-> Play の非公式プロトコル利用はアカウント凍結リスクがあるため、専用/サブの Google アカウントを使うこと。
-
-### AAS トークンの作り方（一度だけ）
-1. ブラウザで `https://accounts.google.com/EmbeddedSetup` にサブ垢でログインし、`oauth_token`（`oauth2_4/...` で始まる値）を取得する。
-2. ローカルで apkeep に渡して AAS トークンを得る:
-   ```bash
-   apkeep -a jp.co.kyoritsu.domico -d google-play \
-     -e "<email>" --oauth-token "<oauth_token>" --accept-tos work/_t
-   ```
-   実行時に表示される AAS トークンを控える。
-3. `GOOGLE_EMAIL` と `GOOGLE_AAS_TOKEN` を GitHub Secrets に登録する。
+### 初期設定（Secrets / apkeep）
+必要な Secrets（`GOOGLE_EMAIL` / `GOOGLE_AAS_TOKEN` / keystore 系 4 つ）の登録と、
+AAS トークンの取得手順・ハマりどころは **[ci-setup.md](ci-setup.md)** にまとめている。
 
 > 取得できる密度・ABI は apkeep の既定デバイスプロファイル依存。端末に完全一致させたい場合は A（端末 pull）を使う。
 
