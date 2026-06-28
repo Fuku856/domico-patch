@@ -146,16 +146,20 @@ jobs:
           # gh release create は --clobber 非対応 & 既存タグだと失敗するため、
           # force 再実行に備えて既存 Release があれば削除してから作り直す(タグは残す)。
           gh release delete "${{ steps.ver.outputs.tag }}" --yes 2>/dev/null || true
+          # 複数行の notes は --notes-file で渡す(YAML ブロック内に生の改行を埋めない)。
+          cat > release_notes.md <<EOF
+          公式 ${{ steps.ver.outputs.vn }} (versionCode ${{ steps.ver.outputs.vc }}) に B案パッチ(起動時ログイン通知のタッチ遮断解除)を classes4.dex 差し替えで適用し再署名したものです。日本語スプリット(config.ja): ${{ steps.ver.outputs.has_ja != '' && '含む' || '未検出(要確認)' }}
+
+          添付の domico-${{ steps.ver.outputs.vn }}-patch.apks は分割APK(base + config 群)を1つにまとめたものです。
+
+          インストール: SAI / Shizuku 等の分割対応インストーラで、この .apks を選んで入れてください。
+          公式版とは署名が異なるため、初回は公式版のアンインストールが必要です。
+          (adb で入れる場合: .apks を unzip し adb install-multiple --no-incremental -r *.apk)
+          EOF
           gh release create "${{ steps.ver.outputs.tag }}" \
             work/out/domico-${{ steps.ver.outputs.vn }}-patch.apks \
             --title "Domico ${{ steps.ver.outputs.vn }} (patched: login-toast click-through)" \
-            --notes "公式 ${{ steps.ver.outputs.vn }} (versionCode ${{ steps.ver.outputs.vc }}) に B案パッチ(起動時ログイン通知のタッチ遮断解除)を classes4.dex 差し替えで適用し再署名したものです。日本語スプリット(config.ja): ${{ steps.ver.outputs.has_ja != '' && '含む' || '未検出(要確認)' }}
-
-添付の domico-${{ steps.ver.outputs.vn }}-patch.apks は分割APK(base + config 群)を1つにまとめたものです。
-
-インストール: SAI / Shizuku 等の分割対応インストーラで、この .apks を選んで入れてください。
-公式版とは署名が異なるため、初回は公式版のアンインストールが必要です。
-(adb で入れる場合: .apks を unzip し adb install-multiple --no-incremental -r *.apk)"
+            --notes-file release_notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
