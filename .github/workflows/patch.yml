@@ -1,18 +1,30 @@
 name: Patch Domico (auto)
 
-# 公式 Domico の更新を検知し、APK を取得して B案パッチ・再署名し、
-# Release として配布する。手動実行も可。
+# 公式 Domico の更新を検知し、APK を取得して B案パッチ(起動時ログイン通知の
+# タッチ遮断解除)を classes4.dex 差し替えで適用・再署名し、個別 .apk を
+# Release に添付する。手動実行も可。
+#
+# 重要: パッチは apktool 全体リビルドではなく「classes4.dex のみ差し替え」方式
+#       (resources.arsc / AndroidManifest はバイト維持)。apktool で作り直すと
+#       一部端末(Xiaomi/HyperOS 等)が INSTALL_FAILED_USER_RESTRICTED で弾くため。
 #
 # 必要な GitHub Secrets:
 #   KEYSTORE_BASE64  : 署名用 keystore を base64 化したもの
-#                      (生成: scripts/gen-keystore.sh で作った .keystore を
-#                       `base64 -w0 my.keystore` した文字列)
 #   KEYSTORE_PASSWORD: keystore のパスワード (storepass)
-#   KEY_PASSWORD     : 鍵のパスワード (keypass。storepass と同じなら省略可で KEYSTORE_PASSWORD を流用)
+#   KEY_PASSWORD     : 鍵のパスワード (省略時は KEYSTORE_PASSWORD を流用)
 #   KEY_ALIAS        : 鍵のエイリアス
+#   GOOGLE_EMAIL     : Google アカウントのメール (Play 取得用)
+#   GOOGLE_AAS_TOKEN : 上記アカウントの AAS トークン (Play 取得用)
+#   (keystore 系は scripts/setup-signing.* でまとめて登録可。
+#    AAS トークンの作り方は docs/install.md を参照)
 #
-# 取得元(APKPure)が落ちている/構造変更した場合は失敗するので、
-# その際は手動で input を渡して再実行できるよう workflow_dispatch を用意。
+# 言語について:
+#   Google Play から locale=ja_JP で取得するため config.ja(日本語)を含む。
+#   料金は無料(自分のアカウント権利で無料アプリを取得するだけ)。
+#   ※ Play の非公式プロトコル利用はアカウント凍結リスクがあるため、
+#     メインではなく専用/サブの Google アカウント使用を推奨。
+#   ※ 取得できる密度/ABI は apkeep の既定デバイスプロファイル依存。
+#     端末に完全一致させたい場合はローカルの scripts/pull-splits.* を使用。
 
 on:
   schedule:
@@ -25,11 +37,12 @@ on:
         default: false
 
 permissions:
-  contents: write   # Release 作成・タグ push のため
+  contents: write
 
 env:
   PACKAGE: jp.co.kyoritsu.domico
-  APKTOOL_VERSION: "3.0.2"
+  BAKSMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
+  SMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar"
 
 jobs:
   patch:
@@ -49,19 +62,21 @@ jobs:
       - name: Install build-tools 35.0.0
         run: sdkmanager "build-tools;35.0.0" "platform-tools"
 
-      - name: Cache apktool
-        id: cache-apktool
+      - name: Cache smali/baksmali
+        id: cache-smali
         uses: actions/cache@v4
         with:
-          path: tools/apktool.jar
-          key: apktool-${{ env.APKTOOL_VERSION }}
+          path: |
+            tools/baksmali.jar
+            tools/smali.jar
+          key: smali-3.0.9
 
-      - name: Download apktool
-        if: steps.cache-apktool.outputs.cache-hit != 'true'
+      - name: Download smali/baksmali
+        if: steps.cache-smali.outputs.cache-hit != 'true'
         run: |
           mkdir -p tools
-          curl -L -o tools/apktool.jar \
-            "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VERSION}/apktool_${APKTOOL_VERSION}.jar"
+          curl -L -o tools/baksmali.jar "$BAKSMALI_URL"
+          curl -L -o tools/smali.jar "$SMALI_URL"
 
       - name: Install apkeep (APK downloader)
         run: |
@@ -69,33 +84,37 @@ jobs:
           chmod +x apkeep
           sudo mv apkeep /usr/local/bin/apkeep
 
-      - name: Download latest Domico (APKPure / XAPK split)
+      - name: Download latest Domico (Google Play, 日本語含む)
         run: |
-          mkdir -p download
-          apkeep -a "${PACKAGE}" -d apk-pure download/
+          rm -rf download && mkdir -p download
+          # 自分の Google アカウント権利で無料アプリを取得(課金なし)。
+          # locale=ja_JP で日本語スプリット(config.ja)を含める。split_apk=1 で分割取得。
+          apkeep -a "${PACKAGE}" -d google-play \
+            -e "${{ secrets.GOOGLE_EMAIL }}" -t "${{ secrets.GOOGLE_AAS_TOKEN }}" \
+            --accept-tos -o "split_apk=1,locale=ja_JP" \
+            download/
+          # 入れ子で落ちることがあるので全 .apk を download/ 直下へ集約
+          find download -mindepth 2 -name '*.apk' -exec mv -t download/ {} + 2>/dev/null || true
           echo "--- downloaded ---"
           ls -la download/
 
       - name: Detect version & compare with last patched
         id: ver
         run: |
-          # apkeep は <pkg>.xapk または <pkg>.apk を出力
-          INPUT=$(ls download/${PACKAGE}.xapk download/${PACKAGE}.apk 2>/dev/null | head -1)
-          echo "input=$INPUT" >> "$GITHUB_OUTPUT"
-          # versionCode を manifest.json(xapk) から取得（apkなら aapt で取得）
-          if [[ "$INPUT" == *.xapk ]]; then
-            VC=$(unzip -p "$INPUT" manifest.json | python3 -c "import sys,json;print(json.load(sys.stdin)['version_code'])")
-            VN=$(unzip -p "$INPUT" manifest.json | python3 -c "import sys,json;print(json.load(sys.stdin)['version_name'])")
-          else
-            AAPT=$(ls $ANDROID_SDK_ROOT/build-tools/*/aapt2 | head -1)
-            VC=$("$AAPT" dump badging "$INPUT" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
-            VN=$("$AAPT" dump badging "$INPUT" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
-          fi
+          AAPT=$(ls $ANDROID_SDK_ROOT/build-tools/*/aapt2 | head -1)
+          # base = classes.dex を含む apk
+          BASE=""
+          for f in download/*.apk; do
+            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
+          done
+          if [ -z "$BASE" ]; then echo "base apk (with dex) not found"; exit 1; fi
+          VC=$("$AAPT" dump badging "$BASE" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+          VN=$("$AAPT" dump badging "$BASE" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
           echo "vc=$VC" >> "$GITHUB_OUTPUT"
           echo "vn=$VN" >> "$GITHUB_OUTPUT"
           echo "tag=v${VN}-patch" >> "$GITHUB_OUTPUT"
-          echo "Detected versionCode=$VC versionName=$VN"
-          # 既存 Release タグがあればスキップ判定
+          echo "has_ja=$(ls download/*config.ja*.apk download/*.ja.apk 2>/dev/null | head -1)" >> "$GITHUB_OUTPUT"
+          echo "Detected versionCode=$VC versionName=$VN base=$BASE"
           if gh release view "v${VN}-patch" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
@@ -108,26 +127,29 @@ jobs:
         if: steps.ver.outputs.exists == 'false' || inputs.force
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > work_keystore.jks
 
-      - name: Build patched APKs
+      - name: Build patched APKs (dex-only patch)
         if: steps.ver.outputs.exists == 'false' || inputs.force
         run: |
           BT=$(ls -d $ANDROID_SDK_ROOT/build-tools/35.0.0)
           python3 scripts/build.py \
-            --input "${{ steps.ver.outputs.input }}" \
-            --apktool tools/apktool.jar \
+            --input download \
             --build-tools "$BT" \
             --keystore work_keystore.jks \
             --ks-pass "${{ secrets.KEYSTORE_PASSWORD }}" \
             --key-pass "${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}" \
             --alias "${{ secrets.KEY_ALIAS }}"
 
-      - name: Publish Release
+      - name: Publish Release (attach individual .apk)
         if: steps.ver.outputs.exists == 'false' || inputs.force
         run: |
           gh release create "${{ steps.ver.outputs.tag }}" \
-            work/out/*.apk work/out/Domico-patched.apks \
+            work/out/*.apk \
             --title "Domico ${{ steps.ver.outputs.vn }} (patched: login-toast click-through)" \
-            --notes "公式 ${{ steps.ver.outputs.vn }} (versionCode ${{ steps.ver.outputs.vc }}) に B案パッチ(起動時ログイン通知のタッチ遮断解除)を適用し再署名したものです。SAI で .apks を、または adb install-multiple で *.apk をインストールしてください。公式版とは署名が異なるため、初回は公式版のアンインストールが必要です。" \
+            --notes "公式 ${{ steps.ver.outputs.vn }} (versionCode ${{ steps.ver.outputs.vc }}) に B案パッチ(起動時ログイン通知のタッチ遮断解除)を classes4.dex 差し替えで適用し再署名したものです。日本語スプリット(config.ja): ${{ steps.ver.outputs.has_ja != '' && '含む' || '未検出(要確認)' }}
+
+インストール: 添付の全 .apk をまとめて入れてください(分割APK)。
+  adb install-multiple --no-incremental -r <添付の全 .apk>
+公式版とは署名が異なるため、初回は公式版のアンインストールが必要です。" \
             --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

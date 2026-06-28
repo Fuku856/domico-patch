@@ -2,13 +2,13 @@
 """
 Domico パッチ ビルドオーケストレータ（ローカル/CI 共通・クロスプラットフォーム）
 
-入力(XAPK/APKS/分割APKフォルダ) -> base 抽出 -> apktool decode ->
-B案 smali パッチ -> apktool build -> 全 split を zipalign + 同一鍵で署名 ->
-署名済み分割APK群 と SAI 用 .apks(zip) を出力。
+入力(XAPK/APKS/分割APKフォルダ) -> base 抽出 -> classes4.dex のみ差し替え(patch_apk.py)
+-> 全 split を zipalign + 同一鍵で署名 -> 署名済み個別 .apk を出力。
+(apktool 全体リビルドは一部端末で Invalid apk になるため不使用)
 
 依存ツール（自動検出 + 環境変数/引数で上書き可）:
   - Java        : $JAVA_HOME/bin/java もしくは PATH の java
-  - apktool.jar : --apktool（既定 tools/apktool.jar、無ければ $APKTOOL_JAR）
+  - baksmali/smali : tools/baksmali.jar, tools/smali.jar (patch_apk.py が使用)
   - zipalign/apksigner : Android SDK build-tools
       --build-tools <dir> / $ANDROID_BUILD_TOOLS / $ANDROID_SDK_ROOT(最新build-tools自動選択)
 
@@ -34,7 +34,6 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_RE = re.compile(r"(^|[/\\])(config|split)[._]", re.IGNORECASE)
 
 
 def log(msg):
@@ -56,13 +55,6 @@ def find_java():
         if os.path.isfile(cand):
             return cand
     return shutil.which("java") or "java"
-
-
-def find_apktool(arg):
-    for c in (arg, os.environ.get("APKTOOL_JAR"), os.path.join(ROOT, "tools", "apktool.jar")):
-        if c and os.path.isfile(c):
-            return c
-    raise SystemExit("apktool.jar not found (use --apktool or place tools/apktool.jar)")
 
 
 def find_build_tools(arg):
@@ -112,10 +104,21 @@ def collect_splits(input_path, workdir):
     apks = glob.glob(os.path.join(extracted, "*.apk"))
     if not apks:
         raise SystemExit("no .apk found in input")
-    base = [a for a in apks if not CONFIG_RE.search(os.path.basename(a))]
-    configs = [a for a in apks if CONFIG_RE.search(os.path.basename(a))]
+
+    # base 判定はファイル名ではなく「classes*.dex を含む apk = base」で行う。
+    # (config split は dex を持たない。apk-pure/端末pull/google-play で命名が
+    #  異なっても確実に base を特定できる)
+    def has_dex(apk):
+        try:
+            with zipfile.ZipFile(apk) as z:
+                return any(re.fullmatch(r"classes\d*\.dex", n) for n in z.namelist())
+        except zipfile.BadZipFile:
+            return False
+
+    base = [a for a in apks if has_dex(a)]
+    configs = [a for a in apks if a not in base]
     if len(base) != 1:
-        # base 判定がつかない場合は最大サイズを base とする
+        # 念のためのフォールバック: 最大サイズを base とする
         apks.sort(key=os.path.getsize, reverse=True)
         base = [apks[0]]
         configs = apks[1:]
@@ -127,7 +130,6 @@ def main():
     ap.add_argument("--input", required=True, help="XAPK/APKS/zip/フォルダ/base.apk")
     ap.add_argument("--out", default=os.path.join(ROOT, "work", "out"))
     ap.add_argument("--workdir", default=os.path.join(ROOT, "work"))
-    ap.add_argument("--apktool")
     ap.add_argument("--build-tools")
     ap.add_argument("--keystore", required=True)
     ap.add_argument("--ks-pass", required=True)
@@ -138,7 +140,6 @@ def main():
     args = ap.parse_args()
 
     java = find_java()
-    apktool = find_apktool(args.apktool)
     bt = find_build_tools(args.build_tools)
     ext = ".bat" if os.name == "nt" else ""
     aexe = ".exe" if os.name == "nt" else ""
@@ -147,22 +148,27 @@ def main():
     key_pass = args.key_pass or args.ks_pass
 
     log(f"java={java}")
-    log(f"apktool={apktool}")
     log(f"build-tools={bt}")
 
-    decoded = os.path.join(args.workdir, "base")
+    # 前回の残骸を除去（base が複数混ざる "Split null defined multiple times" 防止）
+    extracted = os.path.join(args.workdir, "extracted")
+    if os.path.isdir(extracted):
+        shutil.rmtree(extracted)
     os.makedirs(args.out, exist_ok=True)
-    if os.path.isdir(decoded):
-        shutil.rmtree(decoded)
+    for old in glob.glob(os.path.join(args.out, "*.apk")) + \
+               glob.glob(os.path.join(args.out, "*.idsig")) + \
+               glob.glob(os.path.join(args.out, "*.apks")) + \
+               glob.glob(os.path.join(args.out, "*.zip")):
+        os.remove(old)
 
     base_apk, config_apks = collect_splits(args.input, args.workdir)
     log(f"base={os.path.basename(base_apk)} configs={[os.path.basename(c) for c in config_apks]}")
 
-    # decode -> patch -> build
-    run([java, "-jar", apktool, "d", "-f", "-o", decoded, base_apk])
-    run([sys.executable, os.path.join(ROOT, "scripts", "patch_smali.py"), decoded])
+    # 外科的 dex パッチ: 元 base はバイト維持で classesN.dex だけ差し替える
+    # (apktool 全体リビルドは一部端末で Invalid apk になるため不使用)
     base_unsigned = os.path.join(args.out, "base.unsigned.apk")
-    run([java, "-jar", apktool, "b", "-o", base_unsigned, decoded])
+    run([sys.executable, os.path.join(ROOT, "scripts", "patch_apk.py"),
+         "--in", base_apk, "--out", base_unsigned])
 
     # 署名対象: patch済 base + 元 config 群（全て同一鍵）
     signed_paths = []
@@ -188,13 +194,10 @@ def main():
 
     run([apksigner, "verify", "--min-sdk-version", args.min_sdk, signed_paths[0]])
 
-    # SAI 用 .apks(zip)
-    apks_zip = os.path.join(args.out, "Domico-patched.apks")
-    with zipfile.ZipFile(apks_zip, "w", zipfile.ZIP_STORED) as z:
-        for p in signed_paths:
-            z.write(p, os.path.basename(p))
+    # 配布は個別 .apk（Release に添付）。まとめ zip は作らない。
     log("signed splits: " + ", ".join(os.path.basename(p) for p in signed_paths))
-    log("bundle: " + apks_zip)
+    log("install: adb install-multiple --no-incremental -r " +
+        " ".join(os.path.basename(p) for p in signed_paths))
 
     if args.install:
         adb = shutil.which("adb") or "adb"

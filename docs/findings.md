@@ -40,3 +40,16 @@
 - **B案(タッチ遮断のみ解除)** が最小かつ安全。表示は残し、Dialog ウィンドウへ
   `FLAG_NOT_FOCUSABLE(0x8) | FLAG_NOT_TOUCHABLE(0x10) = 0x18` を `addFlags` して
   クリックスルー化する。詳細は [patch-notes.md](patch-notes.md)。
+
+## インストール/ビルドに関する実地知見（Xiaomi POCO F7 Pro / HyperOS）
+- **apktool 全体リビルドは不可**: resources.arsc / AndroidManifest を再エンコードした base は
+  `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾かれた。一方「公式を無改変で再署名しただけ」の
+  セットは問題なくインストールできたため、原因は再署名でも端末ポリシーでもなく **apktool の
+  リソース再構築**と切り分け。→ `classes4.dex` のみ差し替える方式([patch_apk.py](../scripts/patch_apk.py))で解決。
+- **言語**: 文言(`msg_active_contract_success` 等)は base に無く `config.ja` スプリット側。
+  base 既定値は英語(`「%1$s %2$s」logged in!`)。apk-pure はロケール別配信のため英語版になりやすい。
+  → ローカルは端末から `config.ja` を吸い出し、CI は Google Play(locale=ja_JP) で取得。
+- **密度**: POCO F7 Pro は `xxxhdpi`。最初に入手した XAPK は `mdpi`、apkeep 既定は `xxhdpi` で不一致。
+  base に複数密度のフォールバックがあるため致命的ではないが、端末 pull が最も正確。
+- 既知のインストール手段: `adb install-multiple --no-incremental -r <全apk>`（HyperOS でも本方式なら成功）。
+  SAI は `.apks` 拡張子を弾くため使うなら個別 apk か `.zip`。Shizuku 対応インストーラでも可。
