@@ -65,20 +65,31 @@ def find_target_dex(apk):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", required=True)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out")
     ap.add_argument("--baksmali", default=os.path.join(ROOT, "tools", "baksmali.jar"))
     ap.add_argument("--smali", default=os.path.join(ROOT, "tools", "smali.jar"))
     ap.add_argument("--work", default=os.path.join(ROOT, "work", "dexpatch"))
     ap.add_argument("--api", default="26")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="パッチ可否のみ dry-run 検査(dex差し替え/出力はしない)。"
+        "公式更新でパッチ対象が変化したかを実ビルド前に検知する。",
+    )
     args = ap.parse_args()
+    if not args.check and not args.out:
+        ap.error("--out is required unless --check")
 
     java = find_java()
-    for jar in (args.baksmali, args.smali):
+    # --check は baksmali での復号までしか使わないため smali.jar は不要
+    needed_jars = (args.baksmali,) if args.check else (args.baksmali, args.smali)
+    for jar in needed_jars:
         if not os.path.isfile(jar):
             raise SystemExit(f"not found: {jar} (run setup; tools/baksmali.jar, tools/smali.jar)")
 
     target_dex, dexes = find_target_dex(args.inp)
     if not target_dex:
+        # AlertUtils がどの dex にも無い = クラス削除/改名/移動。パッチ対象が変化。
         raise SystemExit(
             "AlertUtils を含む dex が見つかりません。APK 構造が変わった可能性があります。"
         )
@@ -96,8 +107,23 @@ def main():
     smali_dir = os.path.join(work, "smali")
     run([java, "-jar", args.baksmali, "d", dex_in, "-o", smali_dir])
 
+    patch_smali = os.path.join(ROOT, "scripts", "patch_smali.py")
+
+    # --check: dry-run でパッチ可否だけ判定し、dex 差し替えはしない。
+    # patch_smali.py --check が非0 = アンカー(displayToastContract/clearFlags)消失
+    # = 公式更新でパッチ対象コードが変化、と判断して非0終了する。
+    if args.check:
+        p = subprocess.run([sys.executable, patch_smali, "--check", work])
+        if p.returncode != 0:
+            raise SystemExit(
+                "patch dry-run FAILED: パッチ対象コード(AlertUtils.displayToastContract の "
+                "clearFlags アンカー)が変化しています。手動での smali 修正が必要です。"
+            )
+        log("patch dry-run OK: 現行パッチは適用可能です(コード変化なし)")
+        return
+
     # 既存の patch_smali.py を流用(冪等・アンカー基準)
-    run([sys.executable, os.path.join(ROOT, "scripts", "patch_smali.py"), work])
+    run([sys.executable, patch_smali, work])
 
     dex_out = os.path.join(work, "patched.dex")
     run([java, "-jar", args.smali, "a", "-a", args.api, "-o", dex_out, smali_dir])
