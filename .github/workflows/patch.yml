@@ -84,7 +84,40 @@ jobs:
           chmod +x apkeep
           sudo mv apkeep /usr/local/bin/apkeep
 
+      - name: Check latest version (apkeep -l, APK本体は落とさない)
+        id: check
+        run: |
+          # まず -l で「利用可能バージョンだけ」取得し、既存 Release と比較する。
+          # 既に公開済みのバージョンならフルダウンロード(~40MB)を丸ごと省略する。
+          apkeep -a "${PACKAGE}" -d google-play \
+            -e "${{ secrets.GOOGLE_EMAIL }}" -t "${{ secrets.GOOGLE_AAS_TOKEN }}" \
+            --accept-tos -l > apkeep_list.log 2>&1 || true
+          echo "--- apkeep -l output ---"; cat apkeep_list.log
+          # バージョン番号(x.y / x.y.z…)を抽出。`| 1.5.4` 形式の行を優先し、無ければ全体から拾う。
+          VN=$(grep -oE '^\s*\|\s*[0-9]+\.[0-9]+[0-9.]*' apkeep_list.log \
+                 | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1 || true)
+          [ -z "$VN" ] && VN=$(grep -oE '[0-9]+\.[0-9]+[0-9.]*' apkeep_list.log | head -1 || true)
+          if [ -z "$VN" ]; then
+            # 取れなかった時は安全側(=処理続行)に倒す。誤って更新を取りこぼさない。
+            echo "::warning::apkeep -l からバージョンを特定できませんでした。フルダウンロードにフォールバックします。"
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "vn=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "latest available versionName=$VN"
+          echo "vn=$VN" >> "$GITHUB_OUTPUT"
+          if gh release view "v${VN}-patch" >/dev/null 2>&1; then
+            echo "v${VN}-patch は公開済み → ダウンロード/パッチをスキップ"
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "新バージョン v${VN} を検知 → 取得・検査・パッチへ"
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Download latest Domico (Google Play, 日本語含む)
+        if: steps.check.outputs.new == 'true' || inputs.force
         run: |
           rm -rf download && mkdir -p download
           # 自分の Google アカウント権利で無料アプリを取得(課金なし)。
@@ -100,6 +133,7 @@ jobs:
 
       - name: Detect version & compare with last patched
         id: ver
+        if: steps.check.outputs.new == 'true' || inputs.force
         run: |
           AAPT=$(ls $ANDROID_SDK_ROOT/build-tools/*/aapt2 | head -1)
           # base = classes.dex を含む apk
@@ -122,6 +156,26 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify patch still applies (dry-run, ビルド前検査)
+        if: steps.ver.outputs.exists == 'false' || inputs.force
+        run: |
+          # 公式更新でパッチ対象コード(AlertUtils.displayToastContract 内の clearFlags
+          # アンカー)が変化していないかを、実ビルド前に dry-run で検査する。
+          # 変化していれば patch_apk.py --check が非0で落ち、ここでエラーログに記録して停止。
+          BASE=""
+          for f in download/*.apk; do
+            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
+          done
+          if [ -z "$BASE" ]; then echo "::error::base apk (with dex) not found"; exit 1; fi
+          set -o pipefail
+          if ! python3 scripts/patch_apk.py --in "$BASE" --check 2>&1 | tee patch_check.log; then
+            echo "::error::パッチ対象コードが変化しました(${{ steps.ver.outputs.vn }})。" \
+                 "AlertUtils.displayToastContract / clearFlags アンカーを手動確認してください。" \
+                 "詳細は patch_check.log。パッチ未適用のため Release は作成しません。"
+            exit 1
+          fi
+          echo "patch dry-run OK: 現行パッチは ${{ steps.ver.outputs.vn }} に適用可能"
 
       - name: Restore keystore
         if: steps.ver.outputs.exists == 'false' || inputs.force
@@ -146,20 +200,15 @@ jobs:
           # gh release create は --clobber 非対応 & 既存タグだと失敗するため、
           # force 再実行に備えて既存 Release があれば削除してから作り直す(タグは残す)。
           gh release delete "${{ steps.ver.outputs.tag }}" --yes 2>/dev/null || true
-          # 複数行の notes は --notes-file で渡す(YAML ブロック内に生の改行を埋めない)。
-          cat > release_notes.md <<EOF
-          公式 ${{ steps.ver.outputs.vn }} (versionCode ${{ steps.ver.outputs.vc }}) に B案パッチ(起動時ログイン通知のタッチ遮断解除)を classes4.dex 差し替えで適用し再署名したものです。日本語スプリット(config.ja): ${{ steps.ver.outputs.has_ja != '' && '含む' || '未検出(要確認)' }}
-
-          添付の domico-${{ steps.ver.outputs.vn }}-patch.apks は分割APK(base + config 群)を1つにまとめたものです。
-
-          インストール: SAI / Shizuku 等の分割対応インストーラで、この .apks を選んで入れてください。
-          公式版とは署名が異なるため、初回は公式版のアンインストールが必要です。
-          (adb で入れる場合: .apks を unzip し adb install-multiple --no-incremental -r *.apk)
-          EOF
+          # 本文は冒頭にbase versionを1行入れ、その後ろに --generate-notes で
+          # 前回 Release 以降のマージ PR / コミットから自動生成した変更内容を付ける。
+          # (--notes と --generate-notes 併用時、生成分は --notes の後ろに追記される)
+          # (インストール方法やパッチ説明は README / docs に集約し、ここには載せない)
           gh release create "${{ steps.ver.outputs.tag }}" \
             work/out/domico-${{ steps.ver.outputs.vn }}-patch.apks \
-            --title "Domico ${{ steps.ver.outputs.vn }} (patched: login-toast click-through)" \
-            --notes-file release_notes.md
+            --title "Domico ${{ steps.ver.outputs.vn }} Patched" \
+            --notes "Base Version: ${{ steps.ver.outputs.vn }} (versionCode ${{ steps.ver.outputs.vc }})" \
+            --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
