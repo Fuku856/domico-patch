@@ -114,9 +114,19 @@ def main():
     patch_smali = os.path.join(ROOT, "scripts", "patch_smali.py")
 
     # --check: dry-run でパッチ可否だけ判定し、dex 差し替えはしない。
-    # patch_smali.py --check が非0 = アンカー(displayToastContract/clearFlags)消失
-    # = 公式更新でパッチ対象コードが変化、と判断して非0終了する。
+    # パッチ 3-6 は AlertUtils とは別 dex 内のクラスを対象にするため、
+    # --check モードでは全 dex を展開して patch_smali が全パッチを検査できるようにする。
     if args.check:
+        with zipfile.ZipFile(args.inp) as z:
+            for dex_name in dexes:
+                if dex_name == target_dex:
+                    continue  # 既に smali_dir へ展開済み
+                tmp = os.path.join(work, dex_name)
+                with open(tmp, "wb") as f:
+                    f.write(z.read(dex_name))
+                n = re.match(r"classes(\d*)\.dex", dex_name).group(1)
+                sdir = os.path.join(work, f"smali_classes{n}" if n else "smali")
+                run([java, "-jar", args.baksmali, "d", tmp, "-o", sdir])
         p = subprocess.run([sys.executable, patch_smali, "--check", work])
         if p.returncode != 0:
             raise SystemExit(

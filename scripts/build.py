@@ -48,6 +48,21 @@ def run(cmd, **kw):
     return p
 
 
+def git_patch_version():
+    """git describe からパッチ版文字列を作る(失敗時は 'domico-patch dev')。"""
+    try:
+        out = subprocess.run(
+            ["git", "-C", ROOT, "describe", "--tags", "--always", "--dirty"],
+            capture_output=True, text=True,
+        )
+        v = out.stdout.strip()
+        if out.returncode == 0 and v:
+            return f"domico-patch {v}"
+    except Exception:
+        pass
+    return "domico-patch dev"
+
+
 def find_java():
     jh = os.environ.get("JAVA_HOME")
     if jh:
@@ -137,8 +152,11 @@ def main():
     ap.add_argument("--alias", required=True)
     ap.add_argument("--min-sdk", default="26")
     ap.add_argument("--app-version", help="versionName。.apks 同梱物の命名に使用")
+    ap.add_argument("--patch-version", help="設定画面に表示するパッチ版。未指定なら git describe。")
     ap.add_argument("--install", action="store_true", help="adb install-multiple まで実行")
     args = ap.parse_args()
+
+    patch_version = args.patch_version or git_patch_version()
 
     java = find_java()
     bt = find_build_tools(args.build_tools)
@@ -168,8 +186,10 @@ def main():
     # 外科的 dex パッチ: 元 base はバイト維持で classesN.dex だけ差し替える
     # (apktool 全体リビルドは一部端末で Invalid apk になるため不使用)
     base_unsigned = os.path.join(args.out, "base.unsigned.apk")
+    log(f"patch-version={patch_version}")
     run([sys.executable, os.path.join(ROOT, "scripts", "patch_apk.py"),
-         "--in", base_apk, "--out", base_unsigned])
+         "--in", base_apk, "--out", base_unsigned,
+         "--patch-version", patch_version])
 
     # 署名対象: patch済 base + 元 config 群（全て同一鍵）
     signed_paths = []
