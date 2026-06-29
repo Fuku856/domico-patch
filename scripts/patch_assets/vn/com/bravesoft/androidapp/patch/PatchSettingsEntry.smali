@@ -8,7 +8,8 @@
 # resolved as versionContain.getParent() rather than the binding's containerTop,
 # because containerTop is the screen-root LinearLayout (toolbar + full-height
 # NestedScrollView) — appending there pushes the row below the scroll view and
-# off-screen. A long-press on the version row is kept as a secondary entry.
+# off-screen. The secondary entry is a long-press on the bottom-nav "メニュー"
+# tab (see installNav), replacing the old version-row long-press.
 # Idempotent via a view tag. Emits Log.i("domico-patch", ...) for diagnostics.
 
 
@@ -41,7 +42,8 @@
 
     sget-object v0, Lvn/com/bravesoft/androidapp/patch/PatchSettingsOpener;->INSTANCE:Lvn/com/bravesoft/androidapp/patch/PatchSettingsOpener;
 
-    # versionContain は表示中のバージョン行。これをアンカー兼 長押し導線にする。
+    # versionContain は表示中のバージョン行。行の挿入位置アンカーとしてのみ使う。
+    # (バージョン長押しの導線は廃止。長押しは下部ナビ「メニュー」へ移動: installNav)
     iget-object v1, p0, Lvn/com/bravesoft/androidapp/databinding/MenuLayoutBinding;->versionContain:Lvn/com/bravesoft/androidapp/views/ButtonView;
 
     if-nez v1, :cond_have_version
@@ -58,8 +60,6 @@
     goto :have_parent
 
     :cond_have_version
-    invoke-virtual {v1, v0}, Landroid/view/View;->setOnLongClickListener(Landroid/view/View$OnLongClickListener;)V
-
     # versionContain の親 = スクロール内の実メニューリスト。ここへ行を足す。
     invoke-virtual {v1}, Landroid/view/View;->getParent()Landroid/view/ViewParent;
 
@@ -106,6 +106,11 @@
     const-string v6, "パッチ設定"
 
     invoke-virtual {v5, v6}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+
+    # 他のメニュー項目と同じ黒テキストに揃える (0xFF000000)
+    const v6, -0x1000000
+
+    invoke-virtual {v5, v6}, Landroid/widget/TextView;->setTextColor(I)V
 
     const/4 v6, 0x1
 
@@ -160,5 +165,55 @@
     invoke-static {v7, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
 
     :ret
+    return-void
+.end method
+
+.method public static installNav(Lvn/com/bravesoft/androidapp/databinding/MainTabHostLayoutBinding;)V
+    .locals 3
+
+    # 下部ナビ「メニュー」タブ(index 4)を長押しで設定を開く。
+    # OnLongClickListener が true を返すため、Material 標準のツールチップ
+    # (項目名 "メニュー" の表示)は抑止される。MainTabHostFragment.init から呼ぶ。
+    const-string v2, "domico-patch"
+
+    if-nez p0, :cond_0
+
+    return-void
+
+    :cond_0
+    iget-object v0, p0, Lvn/com/bravesoft/androidapp/databinding/MainTabHostLayoutBinding;->bottomNavigation:Lcom/ittianyu/bottomnavigationviewex/BottomNavigationViewEx;
+
+    if-nez v0, :cond_1
+
+    const-string v1, "PatchSettingsEntry.installNav: bottomNavigation null"
+
+    invoke-static {v2, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
+    return-void
+
+    :cond_1
+    const/4 v1, 0x4
+
+    invoke-virtual {v0, v1}, Lcom/ittianyu/bottomnavigationviewex/BottomNavigationViewEx;->getBottomNavigationItemView(I)Lcom/google/android/material/bottomnavigation/BottomNavigationItemView;
+
+    move-result-object v0
+
+    if-nez v0, :cond_2
+
+    const-string v1, "PatchSettingsEntry.installNav: menu item view null"
+
+    invoke-static {v2, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
+    return-void
+
+    :cond_2
+    sget-object v1, Lvn/com/bravesoft/androidapp/patch/PatchSettingsOpener;->INSTANCE:Lvn/com/bravesoft/androidapp/patch/PatchSettingsOpener;
+
+    invoke-virtual {v0, v1}, Landroid/view/View;->setOnLongClickListener(Landroid/view/View$OnLongClickListener;)V
+
+    const-string v1, "PatchSettingsEntry.installNav: long-press wired on menu tab"
+
+    invoke-static {v2, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
     return-void
 .end method

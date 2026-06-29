@@ -7,11 +7,14 @@ Domico 非公式パッチ群の smali 適用スクリプト。
   2. ログイントースト クリックスルー(AlertUtils): 通知ダイアログを
      PatchPrefs.toastEnabled のときだけクリックスルー化(既存パッチをフラグ化)。
   3. テレメトリ停止 + Activity トラッカ + prefs ロード(MyApplication.onCreate)。
-  4. ロード表示クリックスルー(FrameLayoutLoading): 全画面スクリムの
-     setClickable を PatchPrefs.loadingEnabled に応じて切替。
+  4. ロード表示クリックスルー(FrameLayoutLoading): initView 内の全 setClickable
+     (外枠 + 内側スクリム)を PatchPrefs.loadingEnabled に応じて切替。
   5. 送信系の選択的遮断(AppModule.provideRetrofit): 非GET通信中だけ入力を
      遮断する PatchTrafficInterceptor を OkHttp クライアントへ追加。
-  6. 設定画面導線(MenuFragment.init): メニュー行追加 + バージョン長押し。
+  6. 設定画面導線(MenuFragment.init): メニューリストに「パッチ設定」行を追加
+     (タップで設定ダイアログ)。
+  7. 下部ナビ長押し導線(MainTabHostFragment.init): 「メニュー」タブ長押しで
+     設定ダイアログを開く(PatchSettingsEntry.installNav)。
 
 設計方針(公式更新で再適用しやすくする):
   - 行番号ではなく「クラス + メソッド + 命令パターン」をアンカーにする。
@@ -46,13 +49,15 @@ REL_MYAPP = os.path.join("vn", "com", "bravesoft", "androidapp", "MyApplication.
 REL_LOADING = os.path.join("vn", "com", "bravesoft", "androidapp", "views", "FrameLayoutLoading.smali")
 REL_APPMODULE = os.path.join("vn", "com", "bravesoft", "androidapp", "di", "AppModule.smali")
 REL_MENU = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "MenuFragment.smali")
+REL_TABHOST = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "MainTabHostFragment.smali")
 
 # マーカー(冪等判定)
 M_TOAST = "# domico-patch: gated login-toast click-through"
 M_INIT = "# domico-patch: init privacy/loading patches"
 M_LOADING = "# domico-patch: gated loading-overlay click-through"
 M_INTERCEPTOR = "# domico-patch: register mutating-request input guard"
-M_MENU = "# domico-patch: settings entry (menu row + version long-press)"
+M_MENU = "# domico-patch: settings entry (menu row)"
+M_NAV = "# domico-patch: settings entry (bottom-nav menu long-press)"
 
 
 def log(m):
@@ -365,7 +370,48 @@ def patch_menufragment(base_dir, check_only):
     ]
     lines[ret_idx:ret_idx] = inj
     write_lines(path, lines)
-    return True, True, "injected settings entry (menu row + version long-press)"
+    return True, True, "injected settings entry (menu row)"
+
+
+# ---- patch 7: MainTabHostFragment bottom-nav long-press -------------------
+
+def patch_maintabhost(base_dir, check_only):
+    _root, path = find_smali_dir(base_dir, REL_TABHOST)
+    if not path:
+        return False, False, "MainTabHostFragment.smali not found"
+    lines = read_lines(path)
+    start, end = method_bounds(lines, ".method protected init(Landroid/view/View;)V")
+    if start is None or end is None:
+        return False, False, "MainTabHostFragment.init(View) not found"
+    if M_NAV in "".join(lines[start : end + 1]):
+        return True, False, "already patched - skipped"
+    # init 内の最後の return-void を探す
+    ret_idx = None
+    indent = "    "
+    for j in range(end, start, -1):
+        m = re.match(r"^(\s*)return-void\s*$", lines[j])
+        if m:
+            ret_idx, indent = j, m.group(1)
+            break
+    if ret_idx is None:
+        return False, False, "return-void not found in MainTabHostFragment.init"
+    if check_only:
+        return True, False, "would wire bottom-nav menu long-press [dry-run]"
+    # v0 が有効なレジスタであることを保証: .locals が 0 なら 1 に引き上げる。
+    for j in range(start, end + 1):
+        lm = re.match(r"^(\s*)\.locals\s+(\d+)\s*$", lines[j])
+        if lm:
+            if int(lm.group(2)) < 1:
+                lines[j] = f"{lm.group(1)}.locals 1\n"
+            break
+    inj = [
+        f"{indent}{M_NAV}\n",
+        f"{indent}iget-object v0, p0, Lvn/com/bravesoft/androidapp/ui/MainTabHostFragment;->binding:Lvn/com/bravesoft/androidapp/databinding/MainTabHostLayoutBinding;\n",
+        f"{indent}invoke-static {{v0}}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsEntry;->installNav(Lvn/com/bravesoft/androidapp/databinding/MainTabHostLayoutBinding;)V\n",
+    ]
+    lines[ret_idx:ret_idx] = inj
+    write_lines(path, lines)
+    return True, True, "wired bottom-nav menu long-press to settings"
 
 
 # ---- driver ----------------------------------------------------------------
@@ -377,6 +423,7 @@ PATCHES = [
     ("loading", patch_frameloading),
     ("interceptor", patch_appmodule),
     ("menu", patch_menufragment),
+    ("nav", patch_maintabhost),
 ]
 
 

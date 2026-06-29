@@ -63,6 +63,11 @@
 
     invoke-virtual {v4, p2}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
 
+    # パッチ名は黒テキスト (0xFF000000)。説明文は下でグレーのまま維持。
+    const v6, -0x1000000
+
+    invoke-virtual {v4, v6}, Landroid/widget/TextView;->setTextColor(I)V
+
     const/4 v5, 0x2
 
     const/high16 v6, 0x41800000    # 16.0f
@@ -168,7 +173,7 @@
 
     const-string v2, "ログイントースト クリックスルー"
 
-    const-string v3, "ログイン時の通知バー表示中も画面を操作できるようにします。"
+    const-string v3, "アプリ起動後の、自動ログイントースト表示中も画面を操作できるように。"
 
     const-string v4, "toast_clickthrough"
 
@@ -176,20 +181,50 @@
 
     const-string v2, "ロード中の操作を許可"
 
-    const-string v3, "画面遷移・取得ロード中も操作できます（送信中は二重送信防止のため遮断）。"
+    const-string v3, "画面遷移・取得ロード中も操作を可能に。（送信中は二重送信防止のため遮断）"
 
     const-string v4, "loading_clickthrough"
 
     invoke-static {p0, v0, v2, v3, v4}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->addRow(Landroid/content/Context;Landroid/widget/LinearLayout;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
 
-    const-string v2, "テレメトリ送信を停止"
+    const-string v2, "テレメトリ送信をブロック"
 
-    const-string v3, "Firebase Analytics / Crashlytics / Performance と広告 ID の送信を止めます（通知は維持）。"
+    const-string v3, "Firebase Analytics / Crashlytics / Performance と広告 ID の送信をブロック。（アプリ通知は維持）"
 
     const-string v4, "telemetry_off"
 
     invoke-static {p0, v0, v2, v3, v4}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->addRow(Landroid/content/Context;Landroid/widget/LinearLayout;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
 
+    # --- フッターの上に区切り線を入れて本文と分離する ---
+    new-instance v2, Landroid/view/View;
+
+    invoke-direct {v2, p0}, Landroid/view/View;-><init>(Landroid/content/Context;)V
+
+    const v3, -0x1f1f20    # 0xFFE0E0E0 light gray divider
+
+    invoke-virtual {v2, v3}, Landroid/view/View;->setBackgroundColor(I)V
+
+    new-instance v3, Landroid/widget/LinearLayout$LayoutParams;
+
+    const/4 v4, -0x1
+
+    const/4 v5, 0x1
+
+    invoke-direct {v3, v4, v5}, Landroid/widget/LinearLayout$LayoutParams;-><init>(II)V
+
+    const/16 v4, 0xc
+
+    invoke-static {p0, v4}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->dp(Landroid/content/Context;I)I
+
+    move-result v4
+
+    iput v4, v3, Landroid/view/ViewGroup$MarginLayoutParams;->topMargin:I
+
+    invoke-virtual {v2, v3}, Landroid/view/View;->setLayoutParams(Landroid/view/ViewGroup$LayoutParams;)V
+
+    invoke-virtual {v0, v2}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
+
+    # --- クレジット: 非公式注記 + バージョン。黒テキストで可読性を上げる ---
     new-instance v2, Landroid/widget/TextView;
 
     invoke-direct {v2, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
@@ -198,7 +233,7 @@
 
     invoke-direct {v3}, Ljava/lang/StringBuilder;-><init>()V
 
-    sget-object v4, Lvn/com/bravesoft/androidapp/patch/PatchInfo;->VERSION:Ljava/lang/String;
+    sget-object v4, Lvn/com/bravesoft/androidapp/patch/PatchInfo;->CREDIT:Ljava/lang/String;
 
     invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
@@ -206,7 +241,7 @@
 
     invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
-    sget-object v4, Lvn/com/bravesoft/androidapp/patch/PatchInfo;->CREDIT:Ljava/lang/String;
+    sget-object v4, Lvn/com/bravesoft/androidapp/patch/PatchInfo;->VERSION:Ljava/lang/String;
 
     invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
@@ -216,7 +251,7 @@
 
     invoke-virtual {v2, v3}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
 
-    const v3, -0x777778
+    const v3, -0x1000000    # 0xFF000000 black
 
     invoke-virtual {v2, v3}, Landroid/widget/TextView;->setTextColor(I)V
 
@@ -226,9 +261,7 @@
 
     invoke-virtual {v2, v3, v4}, Landroid/widget/TextView;->setTextSize(IF)V
 
-    invoke-virtual {v2, v1}, Landroid/widget/TextView;->setGravity(I)V
-
-    const/16 v3, 0x10
+    const/16 v3, 0xc
 
     invoke-static {p0, v3}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->dp(Landroid/content/Context;I)I
 
@@ -260,7 +293,7 @@
 
     move-result-object v3
 
-    const-string v4, "閉じる"
+    const-string v4, "保存"
 
     const/4 v5, 0x0
 
