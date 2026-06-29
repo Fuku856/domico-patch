@@ -18,13 +18,19 @@
 .end method
 
 .method public static onAppCreate(Landroid/app/Application;)V
-    .locals 1
+    .locals 2
 
     if-nez p0, :cond_0
 
     return-void
 
     :cond_0
+    const-string v0, "domico-patch"
+
+    const-string v1, "PatchInit.onAppCreate: enter"
+
+    invoke-static {v0, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
     :try_start_0
     invoke-virtual {p0}, Landroid/app/Application;->getApplicationContext()Landroid/content/Context;
 

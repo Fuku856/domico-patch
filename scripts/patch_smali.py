@@ -219,8 +219,10 @@ def patch_myapplication(base_dir, check_only):
 
 # ---- patch 4: FrameLayoutLoading click-through ----------------------------
 
+# initView 内の setClickable(Z)V を受け側クラスを問わず拾う。
+# 外枠 FrameLayoutLoading 自身と内側 scrim(RelativeLayout 等)の両方が対象。
 SETCLICKABLE_RE = re.compile(
-    r"^(\s*)invoke-virtual\s*\{(v\d+),\s*(v\d+)\}\,\s*Landroid/widget/RelativeLayout;->setClickable\(Z\)V\s*$"
+    r"^(\s*)invoke-virtual\s*\{(v\d+|p\d+),\s*(v\d+)\}\,\s*L[^;]+;->setClickable\(Z\)V\s*$"
 )
 
 
@@ -231,45 +233,60 @@ def patch_frameloading(base_dir, check_only):
     lines = read_lines(path)
     if M_LOADING in "".join(lines):
         return True, False, "already patched - skipped"
-    # メソッド境界内で探すことで、将来 setClickable が複数メソッドに増えても
-    # 最初に見つかったメソッド内の呼び出しのみにパッチを当てる。
-    anchor = indent = val = None
+    # 最初に setClickable を含むメソッド(initView)を特定し、その中の
+    # 全 setClickable(Z)V を gating する。外枠 FrameLayoutLoading 自身が
+    # clickable=true のままだと、内側 scrim だけ通しても親がタッチを総取り
+    # するため、両方を loadingEnabled で切り替える必要がある。
+    ms = me = None
     i = 0
     while i < len(lines):
         if lines[i].startswith(".method"):
-            ms, me = i, None
-            for j in range(ms + 1, len(lines)):
+            s, e = i, None
+            for j in range(s + 1, len(lines)):
                 if lines[j].startswith(".end method"):
-                    me = j
+                    e = j
                     break
-            if me is not None:
-                for j in range(ms, me + 1):
-                    m = SETCLICKABLE_RE.match(lines[j])
-                    if m:
-                        anchor, indent, val = j, m.group(1), m.group(3)
-                        break
-                if anchor is not None:
-                    break
-                i = me + 1
-                continue
+            if e is not None and any(
+                SETCLICKABLE_RE.match(lines[k]) for k in range(s, e + 1)
+            ):
+                ms, me = s, e
+                break
+            i = (e + 1) if e is not None else (i + 1)
+            continue
         i += 1
-    if anchor is None:
-        return False, False, "anchor RelativeLayout->setClickable(Z)V not found"
+    if ms is None:
+        return False, False, "anchor setClickable(Z)V not found in any method"
+    anchors = [k for k in range(ms, me + 1) if SETCLICKABLE_RE.match(lines[k])]
+    vals = [SETCLICKABLE_RE.match(lines[k]).group(3) for k in anchors]
     if check_only:
-        return True, False, f"would gate loading overlay (value={val}) [dry-run]"
-    inj = [
-        f"{indent}{M_LOADING}\n",
-        f"{indent}sget-boolean {val}, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->loadingEnabled:Z\n",
-        f"{indent}if-nez {val}, :domico_ct_on\n",
-        f"{indent}const/4 {val}, 0x1\n",
-        f"{indent}goto :domico_ct_done\n",
-        f"{indent}:domico_ct_on\n",
-        f"{indent}const/4 {val}, 0x0\n",
-        f"{indent}:domico_ct_done\n",
-    ]
-    lines[anchor:anchor] = inj
+        return True, False, (
+            f"would gate {len(anchors)} loading setClickable call(s) "
+            f"(values={vals}) [dry-run]"
+        )
+    # 各呼び出しの直前で、その呼び出しが使う値レジスタを loadingEnabled から
+    # 計算し直す(loadingEnabled=true→clickable=false でタッチを通す)。
+    # 末尾側から挿入してインデックスを保つ。ラベルは呼び出しごとに一意化。
+    for idx in range(len(anchors) - 1, -1, -1):
+        k = anchors[idx]
+        m = SETCLICKABLE_RE.match(lines[k])
+        indent, val = m.group(1), m.group(3)
+        # 冪等判定用マーカー M_LOADING は最初の呼び出し(idx==0)に必ず付与する。
+        marker = M_LOADING if idx == 0 else f"{M_LOADING} ({idx})"
+        inj = [
+            f"{indent}{marker}\n",
+            f"{indent}sget-boolean {val}, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->loadingEnabled:Z\n",
+            f"{indent}if-nez {val}, :domico_ct_on_{idx}\n",
+            f"{indent}const/4 {val}, 0x1\n",
+            f"{indent}goto :domico_ct_done_{idx}\n",
+            f"{indent}:domico_ct_on_{idx}\n",
+            f"{indent}const/4 {val}, 0x0\n",
+            f"{indent}:domico_ct_done_{idx}\n",
+        ]
+        lines[k:k] = inj
     write_lines(path, lines)
-    return True, True, f"gated loading overlay click-through (value={val})"
+    return True, True, (
+        f"gated {len(anchors)} loading-overlay setClickable call(s) (values={vals})"
+    )
 
 
 # ---- patch 5: AppModule traffic interceptor -------------------------------

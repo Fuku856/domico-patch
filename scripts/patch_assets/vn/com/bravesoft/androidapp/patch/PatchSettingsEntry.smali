@@ -2,9 +2,14 @@
 .super Ljava/lang/Object;
 .source "PatchSettingsEntry.java"
 
-# domico-patch: wires the settings entry points into the Menu screen — a
-# long-press on the version row plus a visible "パッチ設定" row. Idempotent
-# (guards against adding the row twice via a view tag).
+# domico-patch: wires the settings entry points into the Menu screen.
+# Primary entry is a visible, tappable "パッチ設定" row inserted right after the
+# version row (versionContain) INSIDE the scrollable menu list. The container is
+# resolved as versionContain.getParent() rather than the binding's containerTop,
+# because containerTop is the screen-root LinearLayout (toolbar + full-height
+# NestedScrollView) — appending there pushes the row below the scroll view and
+# off-screen. A long-press on the version row is kept as a secondary entry.
+# Idempotent via a view tag. Emits Log.i("domico-patch", ...) for diagnostics.
 
 
 # direct methods
@@ -17,80 +22,143 @@
 .end method
 
 .method public static install(Lvn/com/bravesoft/androidapp/databinding/MenuLayoutBinding;)V
-    .locals 6
+    .locals 8
 
-    if-nez p0, :cond_0
+    const-string v7, "domico-patch"
+
+    if-nez p0, :cond_have_binding
+
+    const-string v0, "PatchSettingsEntry.install: binding is null"
+
+    invoke-static {v7, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
 
     return-void
 
-    :cond_0
+    :cond_have_binding
+    const-string v0, "PatchSettingsEntry.install: enter"
+
+    invoke-static {v7, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
     sget-object v0, Lvn/com/bravesoft/androidapp/patch/PatchSettingsOpener;->INSTANCE:Lvn/com/bravesoft/androidapp/patch/PatchSettingsOpener;
 
+    # versionContain は表示中のバージョン行。これをアンカー兼 長押し導線にする。
     iget-object v1, p0, Lvn/com/bravesoft/androidapp/databinding/MenuLayoutBinding;->versionContain:Lvn/com/bravesoft/androidapp/views/ButtonView;
 
-    if-eqz v1, :cond_1
+    if-nez v1, :cond_have_version
 
+    # fallback: versionContain が無ければ containerTop を直接の追加先にする。
+    iget-object v2, p0, Lvn/com/bravesoft/androidapp/databinding/MenuLayoutBinding;->containerTop:Landroid/widget/LinearLayout;
+
+    const-string v1, "PatchSettingsEntry.install: versionContain null, fallback containerTop"
+
+    invoke-static {v7, v1}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
+    if-eqz v2, :ret
+
+    goto :have_parent
+
+    :cond_have_version
     invoke-virtual {v1, v0}, Landroid/view/View;->setOnLongClickListener(Landroid/view/View$OnLongClickListener;)V
 
-    :cond_1
-    iget-object v1, p0, Lvn/com/bravesoft/androidapp/databinding/MenuLayoutBinding;->containerTop:Landroid/widget/LinearLayout;
+    # versionContain の親 = スクロール内の実メニューリスト。ここへ行を足す。
+    invoke-virtual {v1}, Landroid/view/View;->getParent()Landroid/view/ViewParent;
 
-    if-eqz v1, :cond_2
+    move-result-object v2
 
-    const-string v2, "domico_patch_row"
+    instance-of v3, v2, Landroid/view/ViewGroup;
 
-    invoke-virtual {v1, v2}, Landroid/view/View;->findViewWithTag(Ljava/lang/Object;)Landroid/view/View;
+    if-nez v3, :cond_cast_parent
 
-    move-result-object v3
+    const-string v0, "PatchSettingsEntry.install: version parent is not a ViewGroup"
 
-    if-nez v3, :cond_2
+    invoke-static {v7, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
 
-    invoke-virtual {v1}, Landroid/view/View;->getContext()Landroid/content/Context;
+    return-void
 
-    move-result-object v3
+    :cond_cast_parent
+    check-cast v2, Landroid/view/ViewGroup;
 
-    new-instance v4, Landroid/widget/TextView;
+    :have_parent
+    # 冪等性: 既に追加済みなら何もしない。
+    const-string v3, "domico_patch_row"
 
-    invoke-direct {v4, v3}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
+    invoke-virtual {v2, v3}, Landroid/view/View;->findViewWithTag(Ljava/lang/Object;)Landroid/view/View;
 
-    const-string v5, "パッチ設定"
+    move-result-object v4
 
-    invoke-virtual {v4, v5}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+    if-eqz v4, :cond_create_row
 
-    const/4 v5, 0x1
+    const-string v0, "PatchSettingsEntry.install: row already present"
 
-    invoke-virtual {v4, v5}, Landroid/view/View;->setClickable(Z)V
+    invoke-static {v7, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
 
-    invoke-virtual {v4, v2}, Landroid/view/View;->setTag(Ljava/lang/Object;)V
+    return-void
 
-    invoke-virtual {v4, v0}, Landroid/view/View;->setOnClickListener(Landroid/view/View$OnClickListener;)V
+    :cond_create_row
+    invoke-virtual {v2}, Landroid/view/View;->getContext()Landroid/content/Context;
 
-    invoke-virtual {v3}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
+    move-result-object v4
 
-    move-result-object v3
+    new-instance v5, Landroid/widget/TextView;
 
-    invoke-virtual {v3}, Landroid/content/res/Resources;->getDisplayMetrics()Landroid/util/DisplayMetrics;
+    invoke-direct {v5, v4}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
 
-    move-result-object v3
+    const-string v6, "パッチ設定"
 
-    iget v3, v3, Landroid/util/DisplayMetrics;->density:F
+    invoke-virtual {v5, v6}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
 
-    const/high16 v5, 0x41800000    # 16.0f
+    const/4 v6, 0x1
 
-    mul-float/2addr v5, v3
+    invoke-virtual {v5, v6}, Landroid/view/View;->setClickable(Z)V
 
-    float-to-int v5, v5
+    invoke-virtual {v5, v3}, Landroid/view/View;->setTag(Ljava/lang/Object;)V
 
-    invoke-virtual {v4, v5, v5, v5, v5}, Landroid/view/View;->setPadding(IIII)V
+    invoke-virtual {v5, v0}, Landroid/view/View;->setOnClickListener(Landroid/view/View$OnClickListener;)V
 
-    const/4 v3, 0x2
+    invoke-virtual {v5, v0}, Landroid/view/View;->setOnLongClickListener(Landroid/view/View$OnLongClickListener;)V
 
-    const/high16 v5, 0x41800000    # 16.0f sp
+    # padding = 16dp (density スケール)
+    invoke-virtual {v4}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
 
-    invoke-virtual {v4, v3, v5}, Landroid/widget/TextView;->setTextSize(IF)V
+    move-result-object v4
 
-    invoke-virtual {v1, v4}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
+    invoke-virtual {v4}, Landroid/content/res/Resources;->getDisplayMetrics()Landroid/util/DisplayMetrics;
 
-    :cond_2
+    move-result-object v4
+
+    iget v4, v4, Landroid/util/DisplayMetrics;->density:F
+
+    const/high16 v6, 0x41800000    # 16.0f
+
+    mul-float/2addr v6, v4
+
+    float-to-int v6, v6
+
+    invoke-virtual {v5, v6, v6, v6, v6}, Landroid/view/View;->setPadding(IIII)V
+
+    const/4 v4, 0x2
+
+    const/high16 v6, 0x41800000    # 16.0f sp
+
+    invoke-virtual {v5, v4, v6}, Landroid/widget/TextView;->setTextSize(IF)V
+
+    # layout params: 横 match_parent / 縦 wrap_content
+    new-instance v4, Landroid/widget/LinearLayout$LayoutParams;
+
+    const/4 v6, -0x1
+
+    const/4 v1, -0x2
+
+    invoke-direct {v4, v6, v1}, Landroid/widget/LinearLayout$LayoutParams;-><init>(II)V
+
+    invoke-virtual {v5, v4}, Landroid/view/View;->setLayoutParams(Landroid/view/ViewGroup$LayoutParams;)V
+
+    invoke-virtual {v2, v5}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
+
+    const-string v0, "PatchSettingsEntry.install: row added"
+
+    invoke-static {v7, v0}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
+
+    :ret
     return-void
 .end method
