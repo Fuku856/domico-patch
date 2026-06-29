@@ -21,6 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # パッチ版を Conventional Commits + patch-v* タグから算出するため全履歴+タグが必要。
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -129,7 +133,8 @@ jobs:
             --ks-pass "${{ secrets.KEYSTORE_PASSWORD }}" \
             --key-pass "${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}" \
             --alias "${{ secrets.KEY_ALIAS }}" \
-            --app-version "${{ steps.check.outputs.vn }}"
+            --app-version "${{ steps.check.outputs.vn }}" \
+            --channel dev
 
       - name: Publish Pre-release
         run: |
