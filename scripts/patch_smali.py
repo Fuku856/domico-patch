@@ -9,8 +9,10 @@ Domico 非公式パッチ群の smali 適用スクリプト。
   3. テレメトリ停止 + Activity トラッカ + prefs ロード(MyApplication.onCreate)。
   4. ロード表示クリックスルー(FrameLayoutLoading): initView 内の全 setClickable
      (外枠 + 内側スクリム)を PatchPrefs.loadingEnabled に応じて切替。
-  5. 送信系の選択的遮断(AppModule.provideRetrofit): 非GET通信中だけ入力を
-     遮断する PatchTrafficInterceptor を OkHttp クライアントへ追加。
+  5. 送信系の選択的遮断(AppModule.provideRetrofit): 送信(mutation)通信中だけ
+     入力を遮断する PatchTrafficInterceptor を OkHttp クライアントへ追加。
+     遮断対象は HTTP メソッドではなく URL パス(安定セグメントの部分一致)で
+     判定する。取得/検証系の POST(*/check-*, */validate, menus/* 等)は通す。
   6. 設定画面導線(MenuFragment.init): メニューリストに「パッチ設定」行を追加
      (タップで設定ダイアログ)。
   7. 下部ナビ長押し導線(MainTabHostFragment.init): 「メニュー」タブ長押しで
