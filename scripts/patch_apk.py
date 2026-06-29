@@ -103,30 +103,22 @@ def main():
     if os.path.isdir(work):
         shutil.rmtree(work)
     os.makedirs(work)
-    dex_in = os.path.join(work, target_dex)
-    with zipfile.ZipFile(args.inp) as z:
-        with open(dex_in, "wb") as f:
-            f.write(z.read(target_dex))
-
-    smali_dir = os.path.join(work, "smali")
-    run([java, "-jar", args.baksmali, "d", dex_in, "-o", smali_dir])
 
     patch_smali = os.path.join(ROOT, "scripts", "patch_smali.py")
 
     # --check: dry-run でパッチ可否だけ判定し、dex 差し替えはしない。
     # パッチ 3-6 は AlertUtils とは別 dex 内のクラスを対象にするため、
-    # --check モードでは全 dex を展開して patch_smali が全パッチを検査できるようにする。
+    # 全 dex を展開して patch_smali が全パッチを検査・適用できるようにする。
+    with zipfile.ZipFile(args.inp) as z:
+        for dex_name in dexes:
+            tmp = os.path.join(work, dex_name)
+            with open(tmp, "wb") as f:
+                f.write(z.read(dex_name))
+            n = re.match(r"classes(\d*)\.dex", dex_name).group(1)
+            sdir = os.path.join(work, f"smali_classes{n}" if n else "smali")
+            run([java, "-jar", args.baksmali, "d", tmp, "-o", sdir])
+
     if args.check:
-        with zipfile.ZipFile(args.inp) as z:
-            for dex_name in dexes:
-                if dex_name == target_dex:
-                    continue  # 既に smali_dir へ展開済み
-                tmp = os.path.join(work, dex_name)
-                with open(tmp, "wb") as f:
-                    f.write(z.read(dex_name))
-                n = re.match(r"classes(\d*)\.dex", dex_name).group(1)
-                sdir = os.path.join(work, f"smali_classes{n}" if n else "smali")
-                run([java, "-jar", args.baksmali, "d", tmp, "-o", sdir])
         p = subprocess.run([sys.executable, patch_smali, "--check", work])
         if p.returncode != 0:
             raise SystemExit(
@@ -142,24 +134,31 @@ def main():
         patch_cmd[2:2] = ["--patch-version", args.patch_version]
     run(patch_cmd)
 
-    dex_out = os.path.join(work, "patched.dex")
-    run([java, "-jar", args.smali, "a", "-a", args.api, "-o", dex_out, smali_dir])
+    # 全 dex を再ビルド
+    new_dex_bytes_map = {}
+    for dex_name in dexes:
+        n = re.match(r"classes(\d*)\.dex", dex_name).group(1)
+        sdir = os.path.join(work, f"smali_classes{n}" if n else "smali")
+        dex_out = os.path.join(work, f"patched_{dex_name}")
+        run([java, "-jar", args.smali, "a", "-a", args.api, "-o", dex_out, sdir])
+        new_dex_bytes_map[dex_name] = open(dex_out, "rb").read()
 
-    # 元 APK をコピーし、target dex だけ差し替え(他エントリは圧縮種別を維持)
-    new_dex_bytes = open(dex_out, "rb").read()
+    # 元 APK をコピーし、全ての dex を差し替え(他エントリは圧縮種別を維持)
     if os.path.exists(args.out):
         os.remove(args.out)
     with zipfile.ZipFile(args.inp) as zin, zipfile.ZipFile(args.out, "w") as zout:
         for item in zin.infolist():
-            data = new_dex_bytes if item.filename == target_dex else zin.read(item.filename)
+            if item.filename in new_dex_bytes_map:
+                data = new_dex_bytes_map[item.filename]
+            else:
+                data = zin.read(item.filename)
             zi = zipfile.ZipInfo(item.filename, date_time=item.date_time)
             zi.compress_type = item.compress_type
             zi.external_attr = item.external_attr
             zi.internal_attr = item.internal_attr
             zi.create_system = item.create_system
             zout.writestr(zi, data)
-    log(f"wrote {args.out} (replaced {target_dex}, others byte-preserved by type)")
-
+    log(f"wrote {args.out} (replaced all dexes, others byte-preserved by type)")
 
 if __name__ == "__main__":
     main()
