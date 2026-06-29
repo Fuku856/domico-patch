@@ -1,0 +1,147 @@
+name: Dev Pre-release (manual)
+
+# dev ブランチの変更を実機テストするためのプレリリースを手動で作成する。
+# 本番ワークフロー(patch.yml)とはタグ名(v${VN}-dev)・prerelease フラグで分離。
+# スケジュール実行なし。手動トリガーのみ。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PACKAGE: jp.co.kyoritsu.domico
+  BAKSMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
+  SMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar"
+
+jobs:
+  prerelease:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK (build-tools)
+        uses: android-actions/setup-android@v3
+
+      - name: Install build-tools 35.0.0
+        run: sdkmanager "build-tools;35.0.0" "platform-tools"
+
+      - name: Cache smali/baksmali
+        id: cache-smali
+        uses: actions/cache@v4
+        with:
+          path: |
+            tools/baksmali.jar
+            tools/smali.jar
+          key: smali-3.0.9
+
+      - name: Download smali/baksmali
+        if: steps.cache-smali.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p tools
+          curl -L -o tools/baksmali.jar "$BAKSMALI_URL"
+          curl -L -o tools/smali.jar "$SMALI_URL"
+
+      - name: Install apkeep (APK downloader)
+        run: |
+          curl -L -o apkeep "https://github.com/EFForg/apkeep/releases/latest/download/apkeep-x86_64-unknown-linux-gnu"
+          chmod +x apkeep
+          sudo mv apkeep /usr/local/bin/apkeep
+
+      - name: Probe latest version (Play, base APK のみ取得)
+        id: check
+        run: |
+          rm -rf probe && mkdir -p probe
+          apkeep -a "${PACKAGE}" -d google-play \
+            -e "${{ secrets.GOOGLE_EMAIL }}" -t "${{ secrets.GOOGLE_AAS_TOKEN }}" \
+            --accept-tos probe/
+          find probe -mindepth 2 -name '*.apk' -exec mv -t probe/ {} + 2>/dev/null || true
+          echo "--- probe downloaded ---"; ls -la probe/
+          AAPT=$(ls $ANDROID_SDK_ROOT/build-tools/*/aapt2 | head -1)
+          BASE=""
+          for f in probe/*.apk; do
+            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
+          done
+          if [ -z "$BASE" ]; then echo "::error::probe base apk (with dex) not found"; exit 1; fi
+          BADGING=$("$AAPT" dump badging "$BASE")
+          VN=$(echo "$BADGING" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          VC=$(echo "$BADGING" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+          echo "vn=$VN" >> "$GITHUB_OUTPUT"
+          echo "vc=$VC" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VN}-dev" >> "$GITHUB_OUTPUT"
+          echo "Probed versionName=$VN versionCode=$VC"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify patch still applies (dry-run)
+        run: |
+          set -o pipefail
+          BASE=""
+          for f in probe/*.apk; do
+            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
+          done
+          if [ -z "$BASE" ]; then echo "::error::probe base apk (with dex) not found for dry-run"; exit 1; fi
+          if ! python3 scripts/patch_apk.py --in "$BASE" --check 2>&1 | tee patch_check.log; then
+            echo "::error::パッチ対象コードが変化しました(${{ steps.check.outputs.vn }})。patch_check.log を確認してください。"
+            exit 1
+          fi
+          echo "patch dry-run OK: ${{ steps.check.outputs.vn }} にパッチ適用可能"
+
+      - name: Download splits (Google Play, 日本語含む)
+        run: |
+          rm -rf download && mkdir -p download
+          apkeep -a "${PACKAGE}" -d google-play \
+            -e "${{ secrets.GOOGLE_EMAIL }}" -t "${{ secrets.GOOGLE_AAS_TOKEN }}" \
+            --accept-tos -o "split_apk=1,locale=ja_JP" \
+            download/
+          find download -mindepth 2 -name '*.apk' -exec mv -t download/ {} + 2>/dev/null || true
+          echo "--- downloaded ---"
+          ls -la download/
+          AAPT=$(ls $ANDROID_SDK_ROOT/build-tools/*/aapt2 | head -1)
+          for f in download/*.apk; do
+            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then
+              VN_DL=$("$AAPT" dump badging "$f" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+              if [ "$VN_DL" != "${{ steps.check.outputs.vn }}" ]; then
+                echo "::warning::Play バージョン不一致: probe=${{ steps.check.outputs.vn }}, splits=$VN_DL"
+              fi
+              break
+            fi
+          done
+
+      - name: Restore keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > work_keystore.jks
+
+      - name: Build patched APKs (dex-only patch)
+        run: |
+          BT=$(ls -d $ANDROID_SDK_ROOT/build-tools/35.0.0)
+          python3 scripts/build.py \
+            --input download \
+            --build-tools "$BT" \
+            --keystore work_keystore.jks \
+            --ks-pass "${{ secrets.KEYSTORE_PASSWORD }}" \
+            --key-pass "${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}" \
+            --alias "${{ secrets.KEY_ALIAS }}" \
+            --app-version "${{ steps.check.outputs.vn }}"
+
+      - name: Publish Pre-release
+        run: |
+          gh release delete "${{ steps.check.outputs.tag }}" --yes 2>/dev/null || true
+          gh release create "${{ steps.check.outputs.tag }}" \
+            work/out/domico-${{ steps.check.outputs.vn }}-patch.apks \
+            --title "[Preview] Domico ${{ steps.check.outputs.vn }} Patched" \
+            --notes "Base Version: ${{ steps.check.outputs.vn }} (versionCode ${{ steps.check.outputs.vc }})" \
+            --generate-notes \
+            --prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup secrets
+        if: always()
+        run: rm -f work_keystore.jks
