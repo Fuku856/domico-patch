@@ -2,7 +2,11 @@ name: Patch Domico (auto)
 
 # 公式 Domico の更新を検知し、APK を取得して B案パッチ(起動時ログイン通知の
 # タッチ遮断解除)を classes4.dex 差し替えで適用・再署名し、全スプリットを1つに
-# まとめた .apks を Release に添付する。手動実行も可。
+# まとめた .apks を Release(v{vn}-patch)に添付する。手動実行も可。
+#
+# あわせて、公式版が更新されるたびに「未加工・公式署名のままの公式 APK」を
+# 独立 Release(v{vn}-official)として自動アーカイブする。これはパッチ適合可否に
+# 依存せず、既に v{vn}-official があれば作成をスキップする(cron 冪等)。
 #
 # 重要: パッチは apktool 全体リビルドではなく「classes4.dex のみ差し替え」方式
 #       (resources.arsc / AndroidManifest はバイト維持)。apktool で作り直すと
@@ -108,43 +112,34 @@ jobs:
           echo "vn=$VN" >> "$GITHUB_OUTPUT"
           echo "vc=$VC" >> "$GITHUB_OUTPUT"
           echo "tag=v${VN}-patch" >> "$GITHUB_OUTPUT"
+          echo "official_tag=v${VN}-official" >> "$GITHUB_OUTPUT"
           echo "Probed versionName=$VN versionCode=$VC"
-          # 既存 Release があれば「更新なし」としてスプリット取得以降を丸ごとスキップ。
+          # パッチ版 Release が既にあれば「パッチは更新なし」としてパッチ処理をスキップ。
           if gh release view "v${VN}-patch" >/dev/null 2>&1; then
-            echo "v${VN}-patch は公開済み → スキップ"
+            echo "v${VN}-patch は公開済み → パッチ処理スキップ"
             echo "new=false" >> "$GITHUB_OUTPUT"
           else
-            echo "新バージョン v${VN} を検知 → スプリット取得・検査・パッチへ"
+            echo "新バージョン v${VN} を検知 → 検査・パッチへ"
             echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+          # 公式ミラー Release は独立判定。既にあれば公式ミラー作成だけをスキップする
+          # (cron で何度走っても重複作成しない)。
+          if gh release view "v${VN}-official" >/dev/null 2>&1; then
+            echo "v${VN}-official は公開済み → 公式ミラー作成スキップ"
+            echo "new_official=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "公式 v${VN} を未アーカイブ → 公式ミラー作成へ"
+            echo "new_official=true" >> "$GITHUB_OUTPUT"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify patch still applies (dry-run, ビルド前検査)
-        if: steps.check.outputs.new == 'true' || inputs.force
-        run: |
-          # probe/ の base APK を再利用してパッチ可否を先に検査する。
-          # dry-run が通った後にのみ全スプリットを取得することで、
-          # パッチ非対応版でも ~80MB の無駄ダウンロードを回避できる。
-          set -o pipefail
-          BASE=""
-          for f in probe/*.apk; do
-            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
-          done
-          if [ -z "$BASE" ]; then echo "::error::probe base apk (with dex) not found for dry-run"; exit 1; fi
-          if ! python3 scripts/patch_apk.py --in "$BASE" --check 2>&1 | tee patch_check.log; then
-            echo "::error::パッチ対象コードが変化しました(${{ steps.check.outputs.vn }})。" \
-                 "patch_check.log の FAIL 行で該当クラスを確認し、smali を手動修正してください。" \
-                 "パッチ未適用のため Release は作成しません。"
-            exit 1
-          fi
-          echo "patch dry-run OK: 現行パッチは ${{ steps.check.outputs.vn }} に適用可能"
-
       - name: Download splits (Google Play, 日本語含む)
-        if: steps.check.outputs.new == 'true' || inputs.force
+        if: steps.check.outputs.new == 'true' || steps.check.outputs.new_official == 'true' || inputs.force
         run: |
           rm -rf download && mkdir -p download
-          # dry-run 通過後に、ビルドに必要な全スプリット(base + config 群)を取得する。
+          # ビルド/公式ミラーに必要な全スプリット(base + config 群)を取得する。
+          # 公式ミラーはパッチ適合可否に依存しないため、dry-run の前に取得する。
           # locale=ja_JP で日本語スプリット(config.ja)を含める。split_apk=1 で分割取得。
           apkeep -a "${PACKAGE}" -d google-play \
             -e "${{ secrets.GOOGLE_EMAIL }}" -t "${{ secrets.GOOGLE_AAS_TOKEN }}" \
@@ -165,6 +160,55 @@ jobs:
               break
             fi
           done
+
+      - name: Bundle official APKs (unmodified, official signature)
+        if: steps.check.outputs.new_official == 'true' || inputs.force
+        run: |
+          # 公式スプリットを未加工(公式署名のまま)で 1 つの .apks に同梱する。
+          # 再署名/zipalign/パッチは一切しない。出力先は build.py が掃除する work/out とは分離。
+          # 旧版の残骸が混ざらないよう出力先は毎回作り直す。
+          rm -rf work/official && mkdir -p work/official
+          python3 scripts/bundle_official.py \
+            --input download \
+            --out work/official/domico-${{ steps.check.outputs.vn }}-official.apks \
+            --app-version "${{ steps.check.outputs.vn }}"
+
+      - name: Publish official mirror Release
+        if: steps.check.outputs.new_official == 'true' || inputs.force
+        run: |
+          # 公式ミラーはパッチ処理より先に公開する(パッチが壊れた版でも公式は残す)。
+          # force 再実行に備え、既存 Release があれば削除してから作り直す(タグは残る)。
+          # 本文は base version の 1 行のみ。--generate-notes は付けない
+          # (このリポジトリの PR/コミット履歴は公式ミラーと無関係なため)。
+          # --latest=false: パッチ破損版で公式ミラーが唯一の新規 Release になっても
+          #   「Latest」表示にせず、未パッチ版をユーザーが誤って掴むのを防ぐ。
+          gh release delete "${{ steps.check.outputs.official_tag }}" --yes 2>/dev/null || true
+          gh release create "${{ steps.check.outputs.official_tag }}" \
+            work/official/domico-${{ steps.check.outputs.vn }}-official.apks \
+            --title "Domico ${{ steps.check.outputs.vn }}（Official mirror）" \
+            --notes "Base Version: ${{ steps.check.outputs.vn }} (versionCode ${{ steps.check.outputs.vc }})" \
+            --latest=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify patch still applies (dry-run, ビルド前検査)
+        if: steps.check.outputs.new == 'true' || inputs.force
+        run: |
+          # probe/ の base APK を再利用してパッチ可否を検査する。
+          # 失敗した場合、公式ミラーは前段で公開済みだがパッチ版 Release は作らない。
+          set -o pipefail
+          BASE=""
+          for f in probe/*.apk; do
+            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
+          done
+          if [ -z "$BASE" ]; then echo "::error::probe base apk (with dex) not found for dry-run"; exit 1; fi
+          if ! python3 scripts/patch_apk.py --in "$BASE" --check 2>&1 | tee patch_check.log; then
+            echo "::error::パッチ対象コードが変化しました(${{ steps.check.outputs.vn }})。" \
+                 "patch_check.log の FAIL 行で該当クラスを確認し、smali を手動修正してください。" \
+                 "パッチ未適用のため パッチ版 Release は作成しません。"
+            exit 1
+          fi
+          echo "patch dry-run OK: 現行パッチは ${{ steps.check.outputs.vn }} に適用可能"
 
       - name: Restore keystore
         if: steps.check.outputs.new == 'true' || inputs.force
