@@ -133,9 +133,11 @@ jobs:
 
       - name: Publish Pre-release
         run: |
+          mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apks \
+             work/out/domico-${{ steps.check.outputs.vn }}-dev.apks
           gh release delete "${{ steps.check.outputs.tag }}" --yes 2>/dev/null || true
           gh release create "${{ steps.check.outputs.tag }}" \
-            work/out/domico-${{ steps.check.outputs.vn }}-patch.apks \
+            work/out/domico-${{ steps.check.outputs.vn }}-dev.apks \
             --title "[Preview] Domico ${{ steps.check.outputs.vn }} Patched" \
             --notes "Base Version: ${{ steps.check.outputs.vn }} (versionCode ${{ steps.check.outputs.vc }})" \
             --generate-notes \
