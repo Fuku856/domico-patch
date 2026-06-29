@@ -34,6 +34,7 @@ FCM（プッシュ通知）と RemoteConfig は維持。動作の軽量化にも
 - 差分メモ: [docs/patch-notes.md](docs/patch-notes.md)
 - ビルド/署名/インストール: [docs/install.md](docs/install.md)
 - CI セットアップ(apkeep + Secrets): [docs/ci-setup.md](docs/ci-setup.md)
+- Dev プレリリース手順: [docs/dev-prerelease.md](docs/dev-prerelease.md)
 
 ## 方式の要点
 - パッチは **`classes4.dex` のみ差し替え**（resources/manifest は公式とバイト一致）。
