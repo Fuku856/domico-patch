@@ -86,6 +86,22 @@
 - サーバー影響: 送信は公式と同一（`POST v1/reservations/checkin`、ボディ `reservation_id` のみ）。
   `is_checkin_time` はサーバー提供フラグで、サーバーが checkin でも時間窓を強制していれば時間外要求は
   エラーで弾かれる（無害・無効）。成功する場合は時間外チェックインがサーバー記録に残る点に留意。
+- ネットワーク差し替え（`patch/PatchCheckInBypass`, OkHttp Interceptor・`checkinEnabled` ゲート）:
+  - 送信: `POST */checkin` が 4xx かつボディに `E1015` を含む場合のみ HTTP 200 + 空 `BaseResponse`
+    （`{"code":"","message":""}`）に差し替え、アプリを成功扱いにして `CheckInDialog` の
+    `callbackCheckIn`→`PatchCheckInCallback.onCheckInSuccess()` を発火させる。
+  - 受け取り情報: `CheckInCompletedDialog` は表示時に自前で `GET v1/reservations/{id}/checkin` を叩く。
+    時間外は当該予約が「すでにキャンセル」扱いでこの GET も 4xx になり、本来サーバーが返す
+    アバター/氏名/部屋番号/食事種別が来ず画面が空になる。そこで `PatchCheckInCallback` がダイアログ
+    表示直前に `PatchCheckInInfo.prepare(homeFragment, dto)` を呼び、端末内の `UserCtrl.getUser()`
+    （アバター/氏名/部屋番号）と `MenuForDayDTO`（朝食/夕食・和食/洋食）から `CheckInInformationResponse`
+    相当の JSON を合成・保持する。`PatchCheckInBypass` が上記 GET の 4xx を受けたとき
+    `PatchCheckInInfo.consume()` で取り出し、HTTP 200 + その JSON に差し替えて受け取り画面を再現する。
+  - 食事種別マッピング（`CheckInCompletedDialog.setUpData` の判定に一致）:
+    `type_of_meal==1`→朝食（`type_of_food==1` 和食 / それ以外 洋食）、`type_of_meal!=1`→夕食。
+    `MenuForDayDTO.isBreakfast()`→朝食=1/夕食=2、`isJapanFoodReserved()`→和食=1/洋食=2。
+  - 既知の制限: 合成 `date` は端末現在日付（`yyyy-MM-dd`）。日付跨ぎ（深夜の前日夕食チェックイン等）では
+    表示日がずれ得る。受け取り画面はすべて端末側合成でサーバーにチェックイン記録は残らない。
 
 ## ビルド方式: dex 差し替え（apktool 全体リビルドは使わない）
 apktool で `resources.arsc` / `AndroidManifest.xml` を再エンコードすると、一部端末（Xiaomi/HyperOS 等）が `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾く。そこで **外科的 dex 差し替え** に変更した。

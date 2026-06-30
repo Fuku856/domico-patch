@@ -2,11 +2,14 @@
 .super Ljava/lang/Object;
 .source "PatchCheckInBypass.java"
 
-# domico-patch: checkin 時間外エラー(E1015)をネットワーク層でフェイク成功に差し替え。
-# PatchPrefs.checkinEnabled が ON で、POST */checkin のレスポンスが 4xx かつ
-# ボディに "E1015" を含む場合のみ介入し、HTTP 200 + 空 BaseResponse を返して
-# アプリ側を成功扱い(CheckInCompletedDialog 表示)にする。
-# サーバー側のチェックイン記録は行われない。
+# domico-patch: checkin 時間外エラーをネットワーク層でフェイク成功に差し替え。
+# PatchPrefs.checkinEnabled が ON のとき、checkin 系の 2 つの通信に介入する:
+#   (1) POST */checkin が 4xx かつボディに "E1015" を含む → HTTP 200 + 空 BaseResponse を返し
+#       アプリ側を成功扱い(onCheckInSuccess→CheckInCompletedDialog 表示)にする。
+#   (2) GET */{id}/checkin (受け取り情報) が 4xx (例: 「すでにキャンセル」) → PatchCheckInInfo に
+#       端末側で合成された受け取り画面データ(JSON)があれば HTTP 200 + その JSON に差し替える。
+#       これにより受け取り画面のアバター/氏名/部屋番号/和洋食/朝夕食が本来通り表示される。
+# サーバー側のチェックイン記録は行われない(表示は端末側合成)。
 
 # interfaces
 .implements Lokhttp3/Interceptor;
@@ -59,19 +62,6 @@
     if-eqz v0, :ret
 
     :try_start_0
-    # GET は対象外
-    invoke-virtual {v1}, Lokhttp3/Request;->method()Ljava/lang/String;
-
-    move-result-object v3
-
-    const-string v4, "GET"
-
-    invoke-virtual {v4, v3}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
-
-    move-result v3
-
-    if-nez v3, :ret
-
     # URL パスに "checkin" が含まれるか（"check-" は含まない）
     invoke-virtual {v1}, Lokhttp3/Request;->url()Lokhttp3/HttpUrl;
 
@@ -93,6 +83,73 @@
 
     if-eqz v3, :ret
 
+    # メソッド判定: GET=受け取り情報 / それ以外(POST)=チェックイン送信
+    invoke-virtual {v1}, Lokhttp3/Request;->method()Ljava/lang/String;
+
+    move-result-object v3
+
+    const-string v4, "GET"
+
+    invoke-virtual {v4, v3}, Ljava/lang/String;->equalsIgnoreCase(Ljava/lang/String;)Z
+
+    move-result v3
+
+    if-eqz v3, :post_checkin
+
+    # ---- (2) GET 受け取り情報: 合成 JSON で差し替え ----
+    # 合成データは消費一回(成功時も取り出して破棄し、stale を残さない)
+    invoke-static {}, Lvn/com/bravesoft/androidapp/patch/PatchCheckInInfo;->consume()Ljava/lang/String;
+
+    move-result-object v3
+
+    # サーバーが実データを返したなら素通り(合成は破棄)
+    invoke-virtual {v2}, Lokhttp3/Response;->isSuccessful()Z
+
+    move-result v4
+
+    if-nez v4, :ret
+
+    # 合成データが無ければエラーのまま素通り
+    if-eqz v3, :ret
+
+    const-string v4, "application/json; charset=utf-8"
+
+    invoke-static {v4}, Lokhttp3/MediaType;->parse(Ljava/lang/String;)Lokhttp3/MediaType;
+
+    move-result-object v4
+
+    invoke-static {v4, v3}, Lokhttp3/ResponseBody;->create(Lokhttp3/MediaType;Ljava/lang/String;)Lokhttp3/ResponseBody;
+
+    move-result-object v3
+
+    invoke-virtual {v2}, Lokhttp3/Response;->newBuilder()Lokhttp3/Response$Builder;
+
+    move-result-object v4
+
+    const/16 v5, 0xc8
+
+    invoke-virtual {v4, v5}, Lokhttp3/Response$Builder;->code(I)Lokhttp3/Response$Builder;
+
+    move-result-object v4
+
+    const-string v5, "OK"
+
+    invoke-virtual {v4, v5}, Lokhttp3/Response$Builder;->message(Ljava/lang/String;)Lokhttp3/Response$Builder;
+
+    move-result-object v4
+
+    invoke-virtual {v4, v3}, Lokhttp3/Response$Builder;->body(Lokhttp3/ResponseBody;)Lokhttp3/Response$Builder;
+
+    move-result-object v4
+
+    invoke-virtual {v4}, Lokhttp3/Response$Builder;->build()Lokhttp3/Response;
+
+    move-result-object v2
+
+    goto :ret
+
+    # ---- (1) POST チェックイン送信: E1015 を成功に差し替え ----
+    :post_checkin
     # 成功レスポンスなら素通り
     invoke-virtual {v2}, Lokhttp3/Response;->isSuccessful()Z
 

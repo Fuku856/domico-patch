@@ -40,6 +40,11 @@
 
     if-eqz v0, :ret
 
+    # 0. 受け取り画面用データを端末側で合成して保持(CheckInCompletedDialog の GET 前に必須)
+    iget-object v1, p0, Lvn/com/bravesoft/androidapp/patch/PatchCheckInCallback;->dto:Lvn/com/bravesoft/androidapp/model/MenuForDayDTO;
+
+    invoke-static {v0, v1}, Lvn/com/bravesoft/androidapp/patch/PatchCheckInInfo;->prepare(Lvn/com/bravesoft/androidapp/ui/HomeFragment;Lvn/com/bravesoft/androidapp/model/MenuForDayDTO;)V
+
     # 1. メニュー情報を更新
     invoke-static {v0}, Lvn/com/bravesoft/androidapp/ui/HomeFragment;->access$getViewModel(Lvn/com/bravesoft/androidapp/ui/HomeFragment;)Lvn/com/bravesoft/androidapp/modelview/HomeModelView;
 
