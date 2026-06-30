@@ -18,9 +18,19 @@ on:
 permissions:
   contents: write
 
+env:
+  PACKAGE: jp.co.kyoritsu.domico
+  BAKSMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
+  SMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar"
+
 jobs:
   release:
     runs-on: ubuntu-latest
+    # build_apk ジョブが参照するため、版・bump 判定を job 出力に公開する。
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      bumped: ${{ steps.ver.outputs.bumped }}
+      exists: ${{ steps.ver.outputs.exists }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,3 +88,131 @@ jobs:
           else
             gh release create "patch-v$VER" --title "domico-patch v$VER" --notes-file RELEASE_NOTES.md
           fi
+
+  # パッチ版が上がったとき、公式最新版にパッチを当てた APK をビルドして
+  # patch-vX.Y.Z リリースへ添付する。ビルド手順は patch.yml の build と同等
+  # (公式版基準の v{vn}-patch とは別軸: ここはパッチ版基準の成果物)。
+  build_apk:
+    needs: release
+    if: needs.release.outputs.bumped == '1' && needs.release.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # release ジョブが push 済みの patch-vX.Y.Z タグを取り込み、build.py が
+          # 設定画面に埋め込むパッチ版(version.py 算出)を正しく解決できるようにする。
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK (build-tools)
+        uses: android-actions/setup-android@v3
+
+      - name: Install build-tools 35.0.0
+        run: sdkmanager "build-tools;35.0.0" "platform-tools"
+
+      - name: Cache smali/baksmali
+        id: cache-smali
+        uses: actions/cache@v4
+        with:
+          path: |
+            tools/baksmali.jar
+            tools/smali.jar
+          key: smali-3.0.9
+
+      - name: Download smali/baksmali
+        if: steps.cache-smali.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p tools
+          curl -L -o tools/baksmali.jar "$BAKSMALI_URL"
+          curl -L -o tools/smali.jar "$SMALI_URL"
+
+      - name: Install apkeep (APK downloader)
+        run: |
+          curl -L -o apkeep "https://github.com/EFForg/apkeep/releases/latest/download/apkeep-x86_64-unknown-linux-gnu"
+          chmod +x apkeep
+          sudo mv apkeep /usr/local/bin/apkeep
+
+      - name: Probe latest official version (Play, base APK のみ)
+        id: probe
+        run: |
+          rm -rf probe && mkdir -p probe
+          apkeep -a "${PACKAGE}" -d google-play \
+            -e "${{ secrets.GOOGLE_EMAIL }}" -t "${{ secrets.GOOGLE_AAS_TOKEN }}" \
+            --accept-tos probe/
+          find probe -mindepth 2 -name '*.apk' -exec mv -t probe/ {} + 2>/dev/null || true
+          AAPT=$(ls $ANDROID_SDK_ROOT/build-tools/*/aapt2 | head -1)
+          BASE=""
+          for f in probe/*.apk; do
+            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
+          done
+          if [ -z "$BASE" ]; then echo "::error::probe base apk (with dex) not found"; exit 1; fi
+          BADGING=$("$AAPT" dump badging "$BASE")
+          VN=$(echo "$BADGING" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          VC=$(echo "$BADGING" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+          echo "vn=$VN" >> "$GITHUB_OUTPUT"
+          echo "vc=$VC" >> "$GITHUB_OUTPUT"
+          echo "Probed official versionName=$VN versionCode=$VC"
+
+      - name: Download splits (Google Play, 日本語含む)
+        run: |
+          rm -rf download && mkdir -p download
+          apkeep -a "${PACKAGE}" -d google-play \
+            -e "${{ secrets.GOOGLE_EMAIL }}" -t "${{ secrets.GOOGLE_AAS_TOKEN }}" \
+            --accept-tos -o "split_apk=1,locale=ja_JP" \
+            download/
+          find download -mindepth 2 -name '*.apk' -exec mv -t download/ {} + 2>/dev/null || true
+          echo "--- downloaded ---"; ls -la download/
+
+      - name: Verify patch still applies (dry-run)
+        run: |
+          set -o pipefail
+          BASE=""
+          for f in probe/*.apk; do
+            if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
+          done
+          if [ -z "$BASE" ]; then echo "::error::probe base apk (with dex) not found for dry-run"; exit 1; fi
+          if ! python3 scripts/patch_apk.py --in "$BASE" --check 2>&1 | tee patch_check.log; then
+            echo "::error::パッチ対象コードが現行公式版(${{ steps.probe.outputs.vn }})に適用できません。" \
+                 "patch_check.log の FAIL 行を確認し smali を修正してください。APK は添付しません。"
+            exit 1
+          fi
+
+      - name: Restore keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > work_keystore.jks
+
+      - name: Build patched APKs (dex-only patch)
+        run: |
+          BT=$(ls -d $ANDROID_SDK_ROOT/build-tools/35.0.0)
+          python3 scripts/build.py \
+            --input download \
+            --build-tools "$BT" \
+            --keystore work_keystore.jks \
+            --ks-pass "${{ secrets.KEYSTORE_PASSWORD }}" \
+            --key-pass "${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}" \
+            --alias "${{ secrets.KEY_ALIAS }}" \
+            --app-version "${{ steps.probe.outputs.vn }}" \
+            --channel release
+
+      - name: Attach .apks to patch-v release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ needs.release.outputs.version }}
+          VN: ${{ steps.probe.outputs.vn }}
+        run: |
+          # 再実行に備え --clobber で同名アセットを上書きする。アセット名には
+          # パッチ版と公式ベース版の両方を含め、どの組合せか分かるようにする。
+          OUT="domico-v${VER}-base${VN}-patch.apks"
+          cp "work/out/domico-${VN}-patch.apks" "$OUT"
+          gh release upload "patch-v$VER" "$OUT" --clobber
+          echo "attached $OUT to patch-v$VER"
+
+      - name: Cleanup secrets
+        if: always()
+        run: rm -f work_keystore.jks
