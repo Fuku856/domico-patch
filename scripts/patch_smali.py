@@ -88,6 +88,22 @@ def write_lines(path, lines):
         f.writelines(lines)
 
 
+def smali_string(s):
+    """文字列を smali の文字列リテラル(両端の " 含む)に安全に変換する。
+
+    バックスラッシュ・二重引用符・制御文字をエスケープし、想定外の値
+    (versionName 等に特殊文字が混入)でも壊れた .field 行を生まないようにする。
+    """
+    out = (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    return f'"{out}"'
+
+
 def method_bounds(lines, sig_prefix):
     start = None
     for i, ln in enumerate(lines):
@@ -136,7 +152,7 @@ def patch_assets(base_dir, check_only, patch_version):
                     if "VERSION:Ljava/lang/String; =" in ln:
                         pl[k] = (
                             "    .field public static final VERSION:Ljava/lang/String; = "
-                            f'"{patch_version}"\n'
+                            f"{smali_string(patch_version)}\n"
                         )
                 write_lines(dst, pl)
             count += 1
