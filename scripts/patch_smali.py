@@ -357,12 +357,9 @@ def patch_appmodule(base_dir, check_only):
 
 # ---- patch 9: AppModule E1015 bypass interceptor --------------------------
 
-# M_INTERCEPTOR がある行の直後の move-result-object をアンカーにし、
-# その直後に PatchCheckInBypass.add を挿入する。
-# patch_appmodule より後に実行することで M_INTERCEPTOR が必ず存在する。
-MOVE_RESULT_OBJ_RE = re.compile(
-    r"^(\s*)move-result-object\s+(v\d+|p\d+)\s*$"
-)
+# interceptor パッチと同じ OkHttpClient$Builder->build() をアンカーにする。
+# M_INTERCEPTOR マーカーへの依存を排除することで、フレッシュな smali
+# (パッチ未適用) に対する --check でも FAIL にならない。
 
 
 def patch_checkin_bypass(base_dir, check_only):
@@ -373,25 +370,16 @@ def patch_checkin_bypass(base_dir, check_only):
     start, end = method_bounds(lines, ".method public final provideRetrofit(")
     if start is None or end is None:
         return False, False, "provideRetrofit(...) not found"
-    seg_text = "".join(lines[start : end + 1])
-    if M_CHECKIN_BYPASS in seg_text:
+    if M_CHECKIN_BYPASS in "".join(lines[start : end + 1]):
         return True, False, "already patched - skipped"
-    if M_INTERCEPTOR not in seg_text:
-        return False, False, f"prerequisite marker '{M_INTERCEPTOR}' not found; run interceptor patch first"
-    # M_INTERCEPTOR マーカー行を探し、その後の move-result-object を特定する
-    marker_idx = next(
-        (i for i in range(start, end + 1) if M_INTERCEPTOR in lines[i]), None
-    )
-    if marker_idx is None:
-        return False, False, "M_INTERCEPTOR marker line not found"
     anchor = indent = builder = None
-    for j in range(marker_idx + 1, min(marker_idx + 5, end + 1)):
-        m = MOVE_RESULT_OBJ_RE.match(lines[j])
+    for j in range(start, end + 1):
+        m = OKHTTP_BUILD_RE.match(lines[j])
         if m:
             anchor, indent, builder = j, m.group(1), m.group(2)
             break
     if anchor is None:
-        return False, False, "move-result-object after PatchTrafficInterceptor.add not found"
+        return False, False, "anchor OkHttpClient$Builder->build() not found in provideRetrofit"
     if check_only:
         return True, False, f"would add E1015 bypass interceptor (builder={builder}) [dry-run]"
     inj = [
@@ -399,7 +387,7 @@ def patch_checkin_bypass(base_dir, check_only):
         f"{indent}invoke-static {{{builder}}}, Lvn/com/bravesoft/androidapp/patch/PatchCheckInBypass;->add(Lokhttp3/OkHttpClient$Builder;)Lokhttp3/OkHttpClient$Builder;\n",
         f"{indent}move-result-object {builder}\n",
     ]
-    lines[anchor + 1 : anchor + 1] = inj
+    lines[anchor:anchor] = inj
     write_lines(path, lines)
     return True, True, f"added E1015 bypass interceptor (builder={builder})"
 
