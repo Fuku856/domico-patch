@@ -224,7 +224,58 @@
 
     invoke-virtual {v0, v2}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
 
-    # --- クレジット: 非公式注記 + バージョン。黒テキストで可読性を上げる ---
+    # --- クレジット: タイトル（太字・大きめ・中央揃え）+ 著作権/バージョン（中央揃え） ---
+    # タイトル行
+    new-instance v2, Landroid/widget/TextView;
+
+    invoke-direct {v2, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
+
+    sget-object v3, Lvn/com/bravesoft/androidapp/patch/PatchInfo;->CREDIT:Ljava/lang/String;
+
+    invoke-virtual {v2, v3}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
+
+    const v3, -0x1000000    # 0xFF000000 black
+
+    invoke-virtual {v2, v3}, Landroid/widget/TextView;->setTextColor(I)V
+
+    const/4 v3, 0x2
+
+    const/high16 v4, 0x41500000    # 13.0f
+
+    invoke-virtual {v2, v3, v4}, Landroid/widget/TextView;->setTextSize(IF)V
+
+    const/4 v3, 0x0
+
+    const/4 v4, 0x1    # Typeface.BOLD
+
+    invoke-virtual {v2, v3, v4}, Landroid/widget/TextView;->setTypeface(Landroid/graphics/Typeface;I)V
+
+    const/4 v3, 0x1    # Gravity.CENTER_HORIZONTAL
+
+    invoke-virtual {v2, v3}, Landroid/widget/TextView;->setGravity(I)V
+
+    # 幅を親いっぱいにして中央揃えを効かせる
+    new-instance v3, Landroid/widget/LinearLayout$LayoutParams;
+
+    const/4 v4, -0x1    # MATCH_PARENT
+
+    const/4 v5, -0x2    # WRAP_CONTENT
+
+    invoke-direct {v3, v4, v5}, Landroid/widget/LinearLayout$LayoutParams;-><init>(II)V
+
+    const/16 v4, 0xc
+
+    invoke-static {p0, v4}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->dp(Landroid/content/Context;I)I
+
+    move-result v4
+
+    iput v4, v3, Landroid/view/ViewGroup$MarginLayoutParams;->topMargin:I
+
+    invoke-virtual {v2, v3}, Landroid/view/View;->setLayoutParams(Landroid/view/ViewGroup$LayoutParams;)V
+
+    invoke-virtual {v0, v2}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
+
+    # 著作権 + バージョン行
     new-instance v2, Landroid/widget/TextView;
 
     invoke-direct {v2, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
@@ -233,7 +284,7 @@
 
     invoke-direct {v3}, Ljava/lang/StringBuilder;-><init>()V
 
-    sget-object v4, Lvn/com/bravesoft/androidapp/patch/PatchInfo;->CREDIT:Ljava/lang/String;
+    sget-object v4, Lvn/com/bravesoft/androidapp/patch/PatchInfo;->COPYRIGHT:Ljava/lang/String;
 
     invoke-virtual {v3, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
 
@@ -261,15 +312,27 @@
 
     invoke-virtual {v2, v3, v4}, Landroid/widget/TextView;->setTextSize(IF)V
 
-    const/16 v3, 0xc
+    const/4 v3, 0x1    # Gravity.CENTER_HORIZONTAL
 
-    invoke-static {p0, v3}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->dp(Landroid/content/Context;I)I
+    invoke-virtual {v2, v3}, Landroid/widget/TextView;->setGravity(I)V
 
-    move-result v3
+    new-instance v3, Landroid/widget/LinearLayout$LayoutParams;
 
-    const/4 v4, 0x0
+    const/4 v4, -0x1    # MATCH_PARENT
 
-    invoke-virtual {v2, v4, v3, v4, v4}, Landroid/view/View;->setPadding(IIII)V
+    const/4 v5, -0x2    # WRAP_CONTENT
+
+    invoke-direct {v3, v4, v5}, Landroid/widget/LinearLayout$LayoutParams;-><init>(II)V
+
+    const/4 v4, 0x4
+
+    invoke-static {p0, v4}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->dp(Landroid/content/Context;I)I
+
+    move-result v4
+
+    iput v4, v3, Landroid/view/ViewGroup$MarginLayoutParams;->topMargin:I
+
+    invoke-virtual {v2, v3}, Landroid/view/View;->setLayoutParams(Landroid/view/ViewGroup$LayoutParams;)V
 
     invoke-virtual {v0, v2}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
 

@@ -6,7 +6,9 @@
 # VERSION is overwritten at build time by patch_smali.py (--patch-version).
 
 # static fields
-.field public static final CREDIT:Ljava/lang/String; = "Domico-Patch — Kyoritsu とは無関係の非公式 UX/プライバシー改善"
+.field public static final CREDIT:Ljava/lang/String; = "Domico-Patch — 非公式 UI/UX,プライバシー改善パッチ"
+
+.field public static final COPYRIGHT:Ljava/lang/String; = "© 2026 Fuku856"
 
 .field public static final VERSION:Ljava/lang/String; = "domico-patch dev"
 
