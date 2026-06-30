@@ -1,8 +1,8 @@
 # domico-patch
 
-公式 **Domico**（寮生向けアプリ, `jp.co.kyoritsu.domico`）の UX を改善する非公式パッチ。
+**Domico**（共立メンテナンス 寮生向けアプリ, `jp.co.kyoritsu.domico`）の UX を改善するパッチ。
 
-起動して自動ログインするたびに画面下部へ約2秒表示される「ログインしました」通知バーが、
+起動して自動ログインするたびに画面下部へ約2秒表示される「ログインしました」通知トーストが、
 その間ほかの操作を遮断する問題を解消する。
 
 ## 何をするか
@@ -37,10 +37,10 @@ FCM（プッシュ通知）と RemoteConfig は維持。動作の軽量化にも
 - Dev プレリリース手順: [docs/dev-prerelease.md](docs/dev-prerelease.md)
 - パッチバージョン仕様: [docs/patch-versioning.md](docs/patch-versioning.md)
 
-## 方式の要点
+## パッチ方式の要点
 - パッチは **`classes4.dex` のみ差し替え**（resources/manifest は公式とバイト一致）。
   apktool 全体リビルドは Xiaomi/HyperOS 等が `INSTALL_FAILED_USER_RESTRICTED` で弾くため不使用。
-- 日本語は `config.ja` スプリットが必要（base には無い）。ローカルは端末 pull、CI は Google Play(ja) で取得。
+- 日本語は `config.ja` **スプリット**または**apkeep**による取得が必要（base には無し）。ローカルは端末 pull、CI は apkeepでGoogle Play(ja) から取得。
 
 ## 構成
 ```
@@ -54,6 +54,7 @@ scripts/
   gen-keystore.{sh,ps1}  # 署名鍵生成のみ
 .github/workflows/
   patch.yml         # 公式更新検知→Google Play(ja)取得→dexパッチ→再署名→Release(.apk添付)
+  dev-prerelease.yml # 手動実行・プレリリース作成（dev テスト用）
 docs/               # 調査/差分/手順
 ```
 
@@ -72,4 +73,4 @@ python scripts/build.py --input work/device_splits --keystore work/domico.keysto
 ## 注意
 - 再署名版は公式と署名が異なるため、初回は公式版のアンインストールが必要（データはサーバ側）。
 - Play 自動更新の対象外。更新は GitHub Release から取得。
-- 私的な UX 改善目的。サーバ通信・本来機能は変更していない。ミラー取得は配布元 ToS 上グレーで自己責任。
+- 私的・学習目的の UX 改善パッチ。サーバ通信・本来機能は変更なし。ミラー取得は配布元 ToS 上グレーで自己責任。
