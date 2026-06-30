@@ -387,7 +387,7 @@
 
     invoke-virtual {v2, v3}, Landroid/widget/LinearLayout;->setOrientation(I)V
 
-    const/4 v3, 0x8
+    const/16 v3, 0x8
 
     invoke-static {p0, v3}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->dp(Landroid/content/Context;I)I
 

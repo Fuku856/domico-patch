@@ -2,11 +2,24 @@ name: Dev Pre-release (manual)
 
 # dev ブランチから手動実行してプレリリースを作成する。
 # checkout はトリガー元ブランチ(dev)を使うため、dev のパッチがそのまま適用される。
-# 本番ワークフロー(patch.yml)とはタグ名(v${VN}-dev)・prerelease フラグで分離。
+# 本番ワークフロー(patch.yml)とはタグ名(patch-v{PV}-dev)・prerelease フラグで分離。
 # スケジュール実行なし。手動トリガーのみ。
+#
+# タグ体系:
+#   patch-v{X.Y.Z}-dev  ← このワークフロー（dev プレリリース）
+#   patch-v{X.Y.Z}      ← release.yml（main マージ後の本番リリース）
+#
+# bump 条件:
+#   patch-v* 以降に feat/fix/perf 等のコミットが無い場合はスキップ。
+#   force=true で強制実行可能。
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: "bump 無しでも強制ビルド（feat/fix なしで実行したい場合に ON）"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -26,19 +39,43 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Compute patch version
+        id: pver
+        run: |
+          OUT=$(python3 scripts/version.py --number-only --print-bumped)
+          VER=$(printf '%s\n' "$OUT" | sed -n 1p)
+          BUMPED=$(printf '%s\n' "$OUT" | sed -n 2p)
+          echo "version=$VER"   >> "$GITHUB_OUTPUT"
+          echo "bumped=$BUMPED" >> "$GITHUB_OUTPUT"
+          echo "Patch version: $VER (bumped=$BUMPED)"
+
+      - name: Check bump condition
+        run: |
+          if [ "${{ steps.pver.outputs.bumped }}" != "1" ] && \
+             [ "${{ inputs.force }}" != "true" ]; then
+            echo "::notice::patch-v* 以降に feat/fix/perf コミットが存在しないため dev pre-release をスキップします。force=true で強制実行できます。"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIP=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Set up JDK 17
+        if: env.SKIP != 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Android SDK (build-tools)
+        if: env.SKIP != 'true'
         uses: android-actions/setup-android@v3
 
       - name: Install build-tools 35.0.0
+        if: env.SKIP != 'true'
         run: sdkmanager "build-tools;35.0.0" "platform-tools"
 
       - name: Cache smali/baksmali
+        if: env.SKIP != 'true'
         id: cache-smali
         uses: actions/cache@v4
         with:
@@ -48,19 +85,21 @@ jobs:
           key: smali-3.0.9
 
       - name: Download smali/baksmali
-        if: steps.cache-smali.outputs.cache-hit != 'true'
+        if: env.SKIP != 'true' && steps.cache-smali.outputs.cache-hit != 'true'
         run: |
           mkdir -p tools
           curl -L -o tools/baksmali.jar "$BAKSMALI_URL"
           curl -L -o tools/smali.jar "$SMALI_URL"
 
       - name: Install apkeep (APK downloader)
+        if: env.SKIP != 'true'
         run: |
           curl -L -o apkeep "https://github.com/EFForg/apkeep/releases/latest/download/apkeep-x86_64-unknown-linux-gnu"
           chmod +x apkeep
           sudo mv apkeep /usr/local/bin/apkeep
 
       - name: Probe latest version (Play, base APK のみ取得)
+        if: env.SKIP != 'true'
         id: check
         run: |
           rm -rf probe && mkdir -p probe
@@ -80,12 +119,13 @@ jobs:
           VC=$(echo "$BADGING" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
           echo "vn=$VN" >> "$GITHUB_OUTPUT"
           echo "vc=$VC" >> "$GITHUB_OUTPUT"
-          echo "tag=v${VN}-dev" >> "$GITHUB_OUTPUT"
+          echo "tag=patch-v${{ steps.pver.outputs.version }}-dev" >> "$GITHUB_OUTPUT"
           echo "Probed versionName=$VN versionCode=$VC"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify patch still applies (dry-run)
+        if: env.SKIP != 'true'
         run: |
           set -o pipefail
           BASE=""
@@ -100,6 +140,7 @@ jobs:
           echo "patch dry-run OK: ${{ steps.check.outputs.vn }} にパッチ適用可能"
 
       - name: Download splits (Google Play, 日本語含む)
+        if: env.SKIP != 'true'
         run: |
           rm -rf download && mkdir -p download
           apkeep -a "${PACKAGE}" -d google-play \
@@ -121,9 +162,11 @@ jobs:
           done
 
       - name: Restore keystore
+        if: env.SKIP != 'true'
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > work_keystore.jks
 
       - name: Build patched APKs (dex-only patch)
+        if: env.SKIP != 'true'
         run: |
           BT=$(ls -d $ANDROID_SDK_ROOT/build-tools/35.0.0)
           python3 scripts/build.py \
@@ -137,14 +180,15 @@ jobs:
             --channel dev
 
       - name: Publish Pre-release
+        if: env.SKIP != 'true'
         run: |
-          mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apks \
-             work/out/domico-${{ steps.check.outputs.vn }}-dev.apks
-          gh release delete "${{ steps.check.outputs.tag }}" --yes 2>/dev/null || true
-          gh release create "${{ steps.check.outputs.tag }}" \
-            work/out/domico-${{ steps.check.outputs.vn }}-dev.apks \
-            --title "[Preview] Domico ${{ steps.check.outputs.vn }} Patched" \
-            --notes "Base Version: ${{ steps.check.outputs.vn }} (versionCode ${{ steps.check.outputs.vc }})" \
+          TAG="patch-v${{ steps.pver.outputs.version }}-dev"
+          FNAME="domico-patch-v${{ steps.pver.outputs.version }}-dev-base${{ steps.check.outputs.vn }}.apks"
+          mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apks work/out/$FNAME
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          gh release create "$TAG" "work/out/$FNAME" \
+            --title "[Preview] Patch v${{ steps.pver.outputs.version }} / Base ${{ steps.check.outputs.vn }}" \
+            --notes "Patch: v${{ steps.pver.outputs.version }}-dev  /  Base: ${{ steps.check.outputs.vn }} (versionCode ${{ steps.check.outputs.vc }})" \
             --generate-notes \
             --prerelease
         env:
