@@ -53,7 +53,8 @@ scripts/
   setup-signing.{ps1,sh} # 署名鍵作成 + GitHub Secrets 登録（ワンショット）
   gen-keystore.{sh,ps1}  # 署名鍵生成のみ
 .github/workflows/
-  patch.yml         # 公式更新検知→Google Play(ja)取得→dexパッチ→再署名→Release(.apk添付)
+  patch.yml          # 公式更新検知→Google Play(ja)取得→dexパッチ→再署名→Release(.apk添付)
+  release.yml        # main push 時にパッチ版確定→CHANGELOG→patch-v* タグ+Release+APK添付
   dev-prerelease.yml # 手動実行・プレリリース作成（dev テスト用）
 docs/               # 調査/差分/手順
 ```

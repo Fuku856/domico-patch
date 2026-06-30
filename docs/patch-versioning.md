@@ -109,16 +109,22 @@ patch_smali.py  → PatchInfo.smali の VERSION フィールドを上書き
 |--------------|-----------|------|
 | [`patch.yml`](../.github/workflows/patch.yml) | `release` | 公式更新を検知して本番 `.apks` をビルド・Release |
 | [`dev-prerelease.yml`](../.github/workflows/dev-prerelease.yml) | `dev` | dev のパッチを手動でプレリリース |
-| [`release.yml`](../.github/workflows/release.yml) | — | main push 時に版算出 → CHANGELOG → `patch-v*` タグ + Release |
+| [`release.yml`](../.github/workflows/release.yml) | — | main push 時に版算出 → CHANGELOG → `patch-v*` タグ + Release + APK 添付 |
 
 `release.yml` の動作：
 
 1. `version.py --number-only --print-bumped` で次版と増分有無を取得。
-2. 増分が無い（feat/fix 等が無い）か、タグが既存ならスキップ。
+2. 増分が無い（`feat`/`fix` 等が前回タグ以降に無い）か、同バージョンのタグが既存ならスキップ。
 3. git-cliff で `CHANGELOG.md` を生成。
 4. `CHANGELOG.md` を `chore(release): … [skip ci]` でコミットし、`patch-v{X.Y.Z}`
    タグを作成して push。
 5. GitHub Release を作成（CHANGELOG 当該節をノートに）。
+6. `build_apk` ジョブが公式最新版にパッチを当てた `.apks` をビルドし、`patch-v{X.Y.Z}`
+   Release に添付する。
+
+> **`build_apk` の実行条件**: 通常は `bumped==1 && exists==false`（新規リリース確定時のみ）。
+> `workflow_dispatch` で既存の `patch-vX.Y.Z` タグを指定することでバックフィルも可能。
+> `docs:`/`ci:`/`chore:` のみのコミットは `bumped==0` になり、このジョブもスキップされる。
 
 > **重要**: いずれのワークフローも checkout は `fetch-depth: 0` + `fetch-tags`。
 > 版算出に全履歴とタグが必要なため（shallow clone だと `0.0.0` になる）。
