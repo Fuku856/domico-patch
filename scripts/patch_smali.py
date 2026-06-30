@@ -418,14 +418,18 @@ def patch_maintabhost(base_dir, check_only):
 
 # ---- driver ----------------------------------------------------------------
 
+# (名前, 関数, 対象クラスの相対 smali パス)。
+# 3 要素目は「変更された shard を特定する」ために使う: パッチ適用後に
+# find_smali_dir で解決した shard 名が、再アセンブルすべき dex を示す。
+# assets はヘルパーを AlertUtils と同じ shard に置くため REL_ALERTUTILS を使う。
 PATCHES = [
-    ("assets", patch_assets),
-    ("toast", patch_alertutils),
-    ("init", patch_myapplication),
-    ("loading", patch_frameloading),
-    ("interceptor", patch_appmodule),
-    ("menu", patch_menufragment),
-    ("nav", patch_maintabhost),
+    ("assets", patch_assets, REL_ALERTUTILS),
+    ("toast", patch_alertutils, REL_ALERTUTILS),
+    ("init", patch_myapplication, REL_MYAPP),
+    ("loading", patch_frameloading, REL_LOADING),
+    ("interceptor", patch_appmodule, REL_APPMODULE),
+    ("menu", patch_menufragment, REL_MENU),
+    ("nav", patch_maintabhost, REL_TABHOST),
 ]
 
 
@@ -444,6 +448,11 @@ def main():
         "--patch-version",
         help="PatchInfo.VERSION に埋め込むバージョン文字列",
     )
+    ap.add_argument(
+        "--changed-out",
+        help="実際に変更した shard 名(改行区切り)を書き出すファイル。"
+        "patch_apk が再アセンブル対象 dex を絞るために使う。",
+    )
     args = ap.parse_args()
     check_only = args.check
     patch_version = args.patch_version
@@ -453,19 +462,30 @@ def main():
         ap.error(f"not a directory: {base_dir}")
 
     failed = False
-    for name, fn in PATCHES:
+    changed_shards = set()
+    for name, fn, rel in PATCHES:
         try:
             if name == "assets":
-                ok, _changed, msg = fn(base_dir, check_only, patch_version)
+                ok, changed, msg = fn(base_dir, check_only, patch_version)
             else:
-                ok, _changed, msg = fn(base_dir, check_only)
+                ok, changed, msg = fn(base_dir, check_only)
         except Exception as e:  # noqa: BLE001
-            ok, msg = False, f"exception: {e}"
+            ok, changed, msg = False, False, f"exception: {e}"
         tag = "OK " if ok else "FAIL"
         stream = sys.stdout if ok else sys.stderr
         print(f"{tag} [{mode}] [{name}] {msg}", file=stream)
         if not ok:
             failed = True
+            continue
+        # 実際にファイルを書き換えたパッチの shard を再アセンブル対象に記録する。
+        if changed and not check_only:
+            root, _ = find_smali_dir(base_dir, rel)
+            if root:
+                changed_shards.add(os.path.basename(root))
+
+    if args.changed_out and not check_only:
+        with open(args.changed_out, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(sorted(changed_shards)))
 
     sys.exit(1 if failed else 0)
 

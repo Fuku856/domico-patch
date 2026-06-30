@@ -128,22 +128,35 @@ def main():
         log("patch dry-run OK: 現行パッチは適用可能です(コード変化なし)")
         return
 
-    # 既存の patch_smali.py を流用(冪等・アンカー基準)
-    patch_cmd = [sys.executable, patch_smali, work]
+    # 既存の patch_smali.py を流用(冪等・アンカー基準)。
+    # 実際に変更した shard 名を changed_out に書き出させ、再アセンブル対象を絞る。
+    changed_out = os.path.join(work, ".changed_shards")
+    patch_cmd = [sys.executable, patch_smali, work, "--changed-out", changed_out]
     if args.patch_version:
         patch_cmd[2:2] = ["--patch-version", args.patch_version]
     run(patch_cmd)
 
-    # 全 dex を再ビルド
+    # patch_smali が実際に書き換えた shard だけを再アセンブルする。未変更 dex は
+    # 元バイトのまま維持: baksmali->smali の往復はバイト同一を保証せず、無関係な
+    # dex を作り直すと一部端末で Invalid apk を誘発しうるため(冒頭の設計方針)。
+    changed_shards = set()
+    if os.path.isfile(changed_out):
+        with open(changed_out, encoding="utf-8") as f:
+            changed_shards = {ln.strip() for ln in f if ln.strip()}
+    log(f"changed shards = {sorted(changed_shards) or '(none)'}")
+
     new_dex_bytes_map = {}
     for dex_name in dexes:
         n = re.match(r"classes(\d*)\.dex", dex_name).group(1)
-        sdir = os.path.join(work, f"smali_classes{n}" if n else "smali")
+        shard = f"smali_classes{n}" if n else "smali"
+        if shard not in changed_shards:
+            continue  # 未変更 dex はバイト維持
+        sdir = os.path.join(work, shard)
         dex_out = os.path.join(work, f"patched_{dex_name}")
         run([java, "-jar", args.smali, "a", "-a", args.api, "-o", dex_out, sdir])
         new_dex_bytes_map[dex_name] = open(dex_out, "rb").read()
 
-    # 元 APK をコピーし、全ての dex を差し替え(他エントリは圧縮種別を維持)
+    # 元 APK をコピーし、変更 dex だけ差し替え(他エントリは圧縮種別を維持)
     if os.path.exists(args.out):
         os.remove(args.out)
     with zipfile.ZipFile(args.inp) as zin, zipfile.ZipFile(args.out, "w") as zout:
@@ -158,7 +171,8 @@ def main():
             zi.internal_attr = item.internal_attr
             zi.create_system = item.create_system
             zout.writestr(zi, data)
-    log(f"wrote {args.out} (replaced all dexes, others byte-preserved by type)")
+    log(f"wrote {args.out} (replaced {len(new_dex_bytes_map)} dex(es): "
+        f"{sorted(new_dex_bytes_map) or '(none)'}; others byte-preserved by type)")
 
 if __name__ == "__main__":
     main()
