@@ -22,7 +22,7 @@
 設定画面にはこの両方を併記する：
 
 ```
-v0.3.0 / base 1.5.4
+v0.3.0 / base v1.5.4
 ```
 
 「どの公式バージョンに対応した、パッチの何版か」が一目で分かる。
@@ -35,8 +35,8 @@ v0.3.0 / base 1.5.4
 
 | チャンネル | 形式 | 例 | 用途 |
 |-----------|------|----|------|
-| `release` | `v{X.Y.Z} / base {app}` | `v0.3.0 / base 1.5.4` | 本番ビルド（`patch.yml`） |
-| `dev` | `v{X.Y.Z}-dev+g{sha}[.dirty] / base {app}` | `v0.3.0-dev+g7afd66a2 / base 1.5.4` | dev プレリリース（`dev-prerelease.yml`） |
+| `release` | `v{X.Y.Z} / base v{app}` | `v0.3.0 / base v1.5.4` | 本番ビルド（`patch.yml`） |
+| `dev` | `v{X.Y.Z}-dev+g{sha}[.dirty] / base v{app}` | `v0.3.0-dev+g7afd66a2 / base v1.5.4` | dev プレリリース（`dev-prerelease.yml`） |
 
 - `-dev+g{sha}`: dev ビルドに短縮コミット SHA を付け、追跡可能にする。
 - `.dirty`: 未コミットの変更があるローカルビルドのみ付与（CI のクリーン checkout では付かない）。
@@ -84,7 +84,7 @@ v0.3.0 / base 1.5.4
 
 ```
 version.py（番号算出）
-   │  format_version(channel, app_version) → "v0.3.0 / base 1.5.4"
+   │  format_version(channel, app_version) → "v0.3.0 / base v1.5.4"
    ▼
 build.py  --channel {release,dev} --app-version <vn>
    │  --patch-version "<上の文字列>"
@@ -144,7 +144,7 @@ dev に積んだコミットが **main にマージされた時点**で `release
 ビルド時に上書きできる：
 
 ```bash
-python scripts/build.py … --patch-version "v1.0.0 / base 1.5.4"
+python scripts/build.py … --patch-version "v1.0.0 / base v1.5.4"
 ```
 
 ### 確認用コマンド

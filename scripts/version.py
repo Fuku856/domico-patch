@@ -11,7 +11,7 @@
       `feat:`                                   -> minor
       `fix:` / `perf:` / `refactor:`            -> patch
       それ以外のみ(docs/ci/chore 等)            -> 据え置き(基準そのまま)
-  - 表示(display): `v{X.Y.Z}[-dev+g{sha}[.dirty]][ / base {app}]`
+  - 表示(display): `v{X.Y.Z}[-dev+g{sha}[.dirty]][ / base v{app}]`
 
 タグ作成(リリース確定)は CI(.github/workflows/release.yml の git-cliff)が行い、
 ここはタグを「読む」だけ。タグが無くても次版を算出して表示できる。
@@ -19,7 +19,7 @@
 CLI:
   python scripts/version.py                          -> 表示文字列(release)
   python scripts/version.py --channel dev            -> dev 表示(`-dev+g<sha>`)
-  python scripts/version.py --app-version 1.5.4      -> ` / base 1.5.4` を付与
+  python scripts/version.py --app-version 1.5.4      -> ` / base v1.5.4` を付与
   python scripts/version.py --number-only            -> `X.Y.Z` のみ(タグ/CHANGELOG 用)
 """
 import argparse
@@ -158,7 +158,7 @@ def format_version(channel="release", app_version=None):
             suffix += ".dirty"
         core += suffix
     if app_version:
-        core += f" / base {app_version}"
+        core += f" / base v{app_version}"
     return core
 
 

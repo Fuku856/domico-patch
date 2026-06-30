@@ -51,7 +51,7 @@ def run(cmd, **kw):
 def compute_patch_version(channel, app_version):
     """Conventional Commits からパッチ版表示文字列を組み立てる(version.py に委譲)。
 
-    例: release -> 'v0.3.0 / base 1.5.4' / dev -> 'v0.3.0-dev+g02322bf / base 1.5.4'
+    例: release -> 'v0.3.0 / base v1.5.4' / dev -> 'v0.3.0-dev+g02322bf / base v1.5.4'
     git 履歴やタグが読めない等で version.py 解決に失敗した場合のみ
     'domico-patch dev' にフォールバックする。
     """
