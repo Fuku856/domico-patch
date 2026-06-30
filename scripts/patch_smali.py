@@ -63,6 +63,7 @@ M_MENU = "# domico-patch: settings entry (menu row)"
 M_NAV = "# domico-patch: settings entry (bottom-nav menu long-press)"
 M_CHECKIN_ENABLE = "# domico-patch: allow out-of-time check-in (gated)"
 M_CHECKIN_CONFIRM = "# domico-patch: out-of-time check-in confirm gate"
+M_CHECKIN_BYPASS = "# domico-patch: E1015 bypass interceptor"
 
 
 def log(m):
@@ -353,6 +354,55 @@ def patch_appmodule(base_dir, check_only):
     return True, True, f"added mutating-request interceptor (builder={builder})"
 
 
+# ---- patch 9: AppModule E1015 bypass interceptor --------------------------
+
+# M_INTERCEPTOR がある行の直後の move-result-object をアンカーにし、
+# その直後に PatchCheckInBypass.add を挿入する。
+# patch_appmodule より後に実行することで M_INTERCEPTOR が必ず存在する。
+MOVE_RESULT_OBJ_RE = re.compile(
+    r"^(\s*)move-result-object\s+(v\d+|p\d+)\s*$"
+)
+
+
+def patch_checkin_bypass(base_dir, check_only):
+    _root, path = find_smali_dir(base_dir, REL_APPMODULE)
+    if not path:
+        return False, False, "AppModule.smali not found"
+    lines = read_lines(path)
+    start, end = method_bounds(lines, ".method public final provideRetrofit(")
+    if start is None or end is None:
+        return False, False, "provideRetrofit(...) not found"
+    seg_text = "".join(lines[start : end + 1])
+    if M_CHECKIN_BYPASS in seg_text:
+        return True, False, "already patched - skipped"
+    if M_INTERCEPTOR not in seg_text:
+        return False, False, f"prerequisite marker '{M_INTERCEPTOR}' not found; run interceptor patch first"
+    # M_INTERCEPTOR マーカー行を探し、その後の move-result-object を特定する
+    marker_idx = next(
+        (i for i in range(start, end + 1) if M_INTERCEPTOR in lines[i]), None
+    )
+    if marker_idx is None:
+        return False, False, "M_INTERCEPTOR marker line not found"
+    anchor = indent = builder = None
+    for j in range(marker_idx + 1, min(marker_idx + 5, end + 1)):
+        m = MOVE_RESULT_OBJ_RE.match(lines[j])
+        if m:
+            anchor, indent, builder = j, m.group(1), m.group(2)
+            break
+    if anchor is None:
+        return False, False, "move-result-object after PatchTrafficInterceptor.add not found"
+    if check_only:
+        return True, False, f"would add E1015 bypass interceptor (builder={builder}) [dry-run]"
+    inj = [
+        f"{indent}{M_CHECKIN_BYPASS}\n",
+        f"{indent}invoke-static {{{builder}}}, Lvn/com/bravesoft/androidapp/patch/PatchCheckInBypass;->add(Lokhttp3/OkHttpClient$Builder;)Lokhttp3/OkHttpClient$Builder;\n",
+        f"{indent}move-result-object {builder}\n",
+    ]
+    lines[anchor + 1 : anchor + 1] = inj
+    write_lines(path, lines)
+    return True, True, f"added E1015 bypass interceptor (builder={builder})"
+
+
 # ---- patch 6: MenuFragment settings entry ---------------------------------
 
 def patch_menufragment(base_dir, check_only):
@@ -558,6 +608,7 @@ PATCHES = [
     ("init", patch_myapplication, REL_MYAPP),
     ("loading", patch_frameloading, REL_LOADING),
     ("interceptor", patch_appmodule, REL_APPMODULE),
+    ("checkin-bypass", patch_checkin_bypass, REL_APPMODULE),
     ("menu", patch_menufragment, REL_MENU),
     ("nav", patch_maintabhost, REL_TABHOST),
     ("checkin", patch_homefragment_checkin, REL_HOME),
