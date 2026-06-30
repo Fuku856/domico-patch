@@ -48,6 +48,22 @@ def run(cmd, **kw):
     return p
 
 
+def compute_patch_version(channel, app_version):
+    """Conventional Commits からパッチ版表示文字列を組み立てる(version.py に委譲)。
+
+    例: release -> 'v0.3.0 / base v1.5.4' / dev -> 'v0.3.0-dev+g02322bf / base v1.5.4'
+    git 履歴やタグが読めない等で version.py 解決に失敗した場合のみ
+    'domico-patch dev' にフォールバックする。
+    """
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import version as _version  # scripts/version.py
+        return _version.format_version(channel, app_version)
+    except Exception as e:  # noqa: BLE001
+        log(f"WARNING: version.py 解決に失敗 ({e}); フォールバック 'domico-patch dev' を使用")
+        return "domico-patch dev"
+
+
 def find_java():
     jh = os.environ.get("JAVA_HOME")
     if jh:
@@ -136,9 +152,14 @@ def main():
     ap.add_argument("--key-pass")
     ap.add_argument("--alias", required=True)
     ap.add_argument("--min-sdk", default="26")
-    ap.add_argument("--app-version", help="versionName。.apks 同梱物の命名に使用")
+    ap.add_argument("--app-version", help="versionName。.apks 同梱物の命名 + パッチ版表示の base に使用")
+    ap.add_argument("--patch-version", help="設定画面に表示するパッチ版。未指定なら Conventional Commits から自動算出。")
+    ap.add_argument("--channel", choices=["release", "dev"], default="release",
+                    help="パッチ版の表示チャンネル。dev は -dev+g<sha> を付与。")
     ap.add_argument("--install", action="store_true", help="adb install-multiple まで実行")
     args = ap.parse_args()
+
+    patch_version = args.patch_version or compute_patch_version(args.channel, args.app_version)
 
     java = find_java()
     bt = find_build_tools(args.build_tools)
@@ -168,8 +189,10 @@ def main():
     # 外科的 dex パッチ: 元 base はバイト維持で classesN.dex だけ差し替える
     # (apktool 全体リビルドは一部端末で Invalid apk になるため不使用)
     base_unsigned = os.path.join(args.out, "base.unsigned.apk")
+    log(f"patch-version={patch_version}")
     run([sys.executable, os.path.join(ROOT, "scripts", "patch_apk.py"),
-         "--in", base_apk, "--out", base_unsigned])
+         "--in", base_apk, "--out", base_unsigned,
+         "--patch-version", patch_version])
 
     # 署名対象: patch済 base + 元 config 群（全て同一鍵）
     signed_paths = []

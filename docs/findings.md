@@ -19,13 +19,20 @@
 - `vn.com.bravesoft.androidapp.ui.MainTabHostFragment#displayToastContractInfo()`
   - `UserCtrl.getUser()` の施設名・部屋番号で `R.string.msg_active_contract_success` をフォーマットして表示。
   - base の既定値は英語（`"「%1$s %2$s」logged in!"`）。
-- `ManagerContractFragment` からも同じ `displayToastContract` を呼ぶ。B案パッチは Dialog 生成箇所を直すため、表示元を問わず効く。
+- `ManagerContractFragment` からも同じ `displayToastContract` を呼ぶ。クリックスルーパッチは Dialog 生成箇所を直すため、表示元を問わず効く。
 
 ## なぜタッチ遮断が起きるか
 `android.app.Dialog` のウィンドウは既定でタッチモーダル（`FLAG_NOT_TOUCH_MODAL` なし）。そのため表示中の約2秒間、バーの外側を含む画面全体のタッチが Dialog に吸われ、下の Activity を操作できなくなる。
 
 ## 結論
-**B案（タッチ遮断のみ解除）** を採用。表示は残し、Dialog ウィンドウへ `FLAG_NOT_FOCUSABLE(0x8) | FLAG_NOT_TOUCHABLE(0x10) = 0x18` を `addFlags` してクリックスルー化する。詳細は [patch-notes.md](patch-notes.md)。
+**クリックスルー化（タッチ遮断のみ解除）** を採用。表示は残し、Dialog ウィンドウへ `FLAG_NOT_FOCUSABLE(0x8) | FLAG_NOT_TOUCHABLE(0x10) = 0x18` を `addFlags` する。詳細は [patch-notes.md](patch-notes.md)。
+
+## 追加パッチの調査（v0.2）
+- **テレメトリ**: Firebase Analytics(AppMeasurement)/Crashlytics/Performance/Ad-ID/Install Referrer を同梱。FCM はプッシュ通知の本来機能。`MyApplication`(classes4) から classes2 の Firebase API を呼んで収集停止できる。
+- **ロード表示**: `vn...views/FrameLayoutLoading`（各 Fragment ルート）の内側全画面 `relativeLayout` が `setClickable(true)` で全タッチを奪う。GET 35 / 更新系(POST/PUT/DELETE) 50。HTTP メソッドが見えるのは OkHttp の `AppModule.provideRetrofit` のクライアントのみ。
+- **二重送信**: 既存 `OnSingleClickListener` は 400ms のクリックデバウンス（速い二度押しのみ抑止）。送信中の意図的な再タップは別途遮断が必要 → `PatchTrafficInterceptor` + `PatchLoadingState` の入力ガードで対応。
+- **設定画面**: 新規 Activity はマニフェスト登録が要るため不可。プログラム生成 `Dialog` で実現。導線は `MenuFragment.init`（`MenuLayoutBinding` の `containerTop` / `versionContain`）に注入。
+- **対象クラスは全て classes4**: AlertUtils / MyApplication / FrameLayoutLoading / AppModule / MenuFragment。新規 `patch/*` も classes4 に同梱するため、現行の単一 dex 差し替え方式のままで完結する。
 
 ## 実地知見（Xiaomi POCO F7 Pro / HyperOS）
 - **apktool 全体リビルドは不可**: `resources.arsc` / `AndroidManifest` を再エンコードした base は `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾かれた。無改変で再署名しただけのセットは入るため、原因は再署名でも端末ポリシーでもなく apktool のリソース再構築と判明。→ `classes4.dex` のみ差し替える方式（[patch_apk.py](../scripts/patch_apk.py)）で解決。

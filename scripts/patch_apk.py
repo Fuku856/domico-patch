@@ -76,6 +76,10 @@ def main():
         help="パッチ可否のみ dry-run 検査(dex差し替え/出力はしない)。"
         "公式更新でパッチ対象が変化したかを実ビルド前に検知する。",
     )
+    ap.add_argument(
+        "--patch-version",
+        help="設定画面フッターに埋め込むパッチバージョン文字列。",
+    )
     args = ap.parse_args()
     if not args.check and not args.out:
         ap.error("--out is required unless --check")
@@ -99,50 +103,76 @@ def main():
     if os.path.isdir(work):
         shutil.rmtree(work)
     os.makedirs(work)
-    dex_in = os.path.join(work, target_dex)
-    with zipfile.ZipFile(args.inp) as z:
-        with open(dex_in, "wb") as f:
-            f.write(z.read(target_dex))
-
-    smali_dir = os.path.join(work, "smali")
-    run([java, "-jar", args.baksmali, "d", dex_in, "-o", smali_dir])
 
     patch_smali = os.path.join(ROOT, "scripts", "patch_smali.py")
 
     # --check: dry-run でパッチ可否だけ判定し、dex 差し替えはしない。
-    # patch_smali.py --check が非0 = アンカー(displayToastContract/clearFlags)消失
-    # = 公式更新でパッチ対象コードが変化、と判断して非0終了する。
+    # パッチ 3-6 は AlertUtils とは別 dex 内のクラスを対象にするため、
+    # 全 dex を展開して patch_smali が全パッチを検査・適用できるようにする。
+    with zipfile.ZipFile(args.inp) as z:
+        for dex_name in dexes:
+            tmp = os.path.join(work, dex_name)
+            with open(tmp, "wb") as f:
+                f.write(z.read(dex_name))
+            n = re.match(r"classes(\d*)\.dex", dex_name).group(1)
+            sdir = os.path.join(work, f"smali_classes{n}" if n else "smali")
+            run([java, "-jar", args.baksmali, "d", tmp, "-o", sdir])
+
     if args.check:
         p = subprocess.run([sys.executable, patch_smali, "--check", work])
         if p.returncode != 0:
             raise SystemExit(
-                "patch dry-run FAILED: パッチ対象コード(AlertUtils.displayToastContract の "
-                "clearFlags アンカー)が変化しています。手動での smali 修正が必要です。"
+                "patch dry-run FAILED: パッチ対象コードが変化しています。"
+                "上記の FAIL 行で該当クラスを確認し、smali を手動修正してください。"
             )
         log("patch dry-run OK: 現行パッチは適用可能です(コード変化なし)")
         return
 
-    # 既存の patch_smali.py を流用(冪等・アンカー基準)
-    run([sys.executable, patch_smali, work])
+    # 既存の patch_smali.py を流用(冪等・アンカー基準)。
+    # 実際に変更した shard 名を changed_out に書き出させ、再アセンブル対象を絞る。
+    changed_out = os.path.join(work, ".changed_shards")
+    patch_cmd = [sys.executable, patch_smali, work, "--changed-out", changed_out]
+    if args.patch_version:
+        patch_cmd[2:2] = ["--patch-version", args.patch_version]
+    run(patch_cmd)
 
-    dex_out = os.path.join(work, "patched.dex")
-    run([java, "-jar", args.smali, "a", "-a", args.api, "-o", dex_out, smali_dir])
+    # patch_smali が実際に書き換えた shard だけを再アセンブルする。未変更 dex は
+    # 元バイトのまま維持: baksmali->smali の往復はバイト同一を保証せず、無関係な
+    # dex を作り直すと一部端末で Invalid apk を誘発しうるため(冒頭の設計方針)。
+    changed_shards = set()
+    if os.path.isfile(changed_out):
+        with open(changed_out, encoding="utf-8") as f:
+            changed_shards = {ln.strip() for ln in f if ln.strip()}
+    log(f"changed shards = {sorted(changed_shards) or '(none)'}")
 
-    # 元 APK をコピーし、target dex だけ差し替え(他エントリは圧縮種別を維持)
-    new_dex_bytes = open(dex_out, "rb").read()
+    new_dex_bytes_map = {}
+    for dex_name in dexes:
+        n = re.match(r"classes(\d*)\.dex", dex_name).group(1)
+        shard = f"smali_classes{n}" if n else "smali"
+        if shard not in changed_shards:
+            continue  # 未変更 dex はバイト維持
+        sdir = os.path.join(work, shard)
+        dex_out = os.path.join(work, f"patched_{dex_name}")
+        run([java, "-jar", args.smali, "a", "-a", args.api, "-o", dex_out, sdir])
+        new_dex_bytes_map[dex_name] = open(dex_out, "rb").read()
+
+    # 元 APK をコピーし、変更 dex だけ差し替え(他エントリは圧縮種別を維持)
     if os.path.exists(args.out):
         os.remove(args.out)
     with zipfile.ZipFile(args.inp) as zin, zipfile.ZipFile(args.out, "w") as zout:
         for item in zin.infolist():
-            data = new_dex_bytes if item.filename == target_dex else zin.read(item.filename)
+            if item.filename in new_dex_bytes_map:
+                data = new_dex_bytes_map[item.filename]
+            else:
+                data = zin.read(item.filename)
             zi = zipfile.ZipInfo(item.filename, date_time=item.date_time)
             zi.compress_type = item.compress_type
             zi.external_attr = item.external_attr
             zi.internal_attr = item.internal_attr
             zi.create_system = item.create_system
             zout.writestr(zi, data)
-    log(f"wrote {args.out} (replaced {target_dex}, others byte-preserved by type)")
-
+    log(f"wrote {args.out} (replaced {len(new_dex_bytes_map)} dex(es): "
+        f"{sorted(new_dex_bytes_map) or '(none)'}; others byte-preserved by type)")
 
 if __name__ == "__main__":
     main()

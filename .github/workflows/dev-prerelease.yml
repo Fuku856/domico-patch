@@ -1,6 +1,7 @@
 name: Dev Pre-release (manual)
 
-# dev ブランチの変更を実機テストするためのプレリリースを手動で作成する。
+# dev ブランチから手動実行してプレリリースを作成する。
+# checkout はトリガー元ブランチ(dev)を使うため、dev のパッチがそのまま適用される。
 # 本番ワークフロー(patch.yml)とはタグ名(v${VN}-dev)・prerelease フラグで分離。
 # スケジュール実行なし。手動トリガーのみ。
 
@@ -20,6 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # パッチ版を Conventional Commits + patch-v* タグから算出するため全履歴+タグが必要。
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -128,13 +133,16 @@ jobs:
             --ks-pass "${{ secrets.KEYSTORE_PASSWORD }}" \
             --key-pass "${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}" \
             --alias "${{ secrets.KEY_ALIAS }}" \
-            --app-version "${{ steps.check.outputs.vn }}"
+            --app-version "${{ steps.check.outputs.vn }}" \
+            --channel dev
 
       - name: Publish Pre-release
         run: |
+          mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apks \
+             work/out/domico-${{ steps.check.outputs.vn }}-dev.apks
           gh release delete "${{ steps.check.outputs.tag }}" --yes 2>/dev/null || true
           gh release create "${{ steps.check.outputs.tag }}" \
-            work/out/domico-${{ steps.check.outputs.vn }}-patch.apks \
+            work/out/domico-${{ steps.check.outputs.vn }}-dev.apks \
             --title "[Preview] Domico ${{ steps.check.outputs.vn }} Patched" \
             --notes "Base Version: ${{ steps.check.outputs.vn }} (versionCode ${{ steps.check.outputs.vc }})" \
             --generate-notes \

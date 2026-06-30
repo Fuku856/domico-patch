@@ -1,0 +1,80 @@
+name: Release patch version (CHANGELOG + tag)
+
+# main への push を「パッチリリース」とみなし、Conventional Commits から
+# パッチ自身のセムバーを算出して patch-vX.Y.Z タグ + CHANGELOG + GitHub Release を
+# 自動生成する。バージョン番号の決定は scripts/version.py が SSOT。git-cliff は
+# CHANGELOG 本文の整形のみ担当する。
+#
+# - リリース対象が無い(前回タグ以降に feat/fix 等が無い)場合は何もしない。
+# - CHANGELOG コミットは [skip ci] 付き & GITHUB_TOKEN push なので再帰実行しない。
+# - main がブランチ保護で bot push を拒否する場合は、保護設定で
+#   github-actions による push を許可する必要がある。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute next patch version
+        id: ver
+        run: |
+          OUT=$(python3 scripts/version.py --number-only --print-bumped)
+          VER=$(printf '%s\n' "$OUT" | sed -n 1p)
+          BUMPED=$(printf '%s\n' "$OUT" | sed -n 2p)
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "bumped=$BUMPED" >> "$GITHUB_OUTPUT"
+          if git rev-parse "patch-v$VER" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "next=patch-v$VER bumped=$BUMPED"
+          if [ "$BUMPED" != "1" ]; then
+            echo "::notice::前回タグ以降にリリース対象コミット(feat/fix 等)が無いためスキップ"
+          fi
+
+      - name: Generate CHANGELOG
+        if: steps.ver.outputs.bumped == '1' && steps.ver.outputs.exists == 'false'
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag patch-v${{ steps.ver.outputs.version }} --output CHANGELOG.md
+
+      - name: Commit, tag, push
+        if: steps.ver.outputs.bumped == '1' && steps.ver.outputs.exists == 'false'
+        env:
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore(release): patch-v$VER [skip ci]" || echo "CHANGELOG 変更なし"
+          git tag -a "patch-v$VER" -m "domico-patch v$VER"
+          git push origin HEAD:main
+          git push origin "patch-v$VER"
+
+      - name: Create GitHub Release
+        if: steps.ver.outputs.bumped == '1' && steps.ver.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          # CHANGELOG 先頭の当該バージョン節だけ抜き出してリリースノートにする。
+          awk '/^## \[/{c++} c==1{print} c==2{exit}' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            gh release create "patch-v$VER" --title "domico-patch v$VER" --generate-notes
+          else
+            gh release create "patch-v$VER" --title "domico-patch v$VER" --notes-file RELEASE_NOTES.md
+          fi
