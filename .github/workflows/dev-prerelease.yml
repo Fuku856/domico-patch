@@ -139,6 +139,14 @@ jobs:
           fi
           echo "patch dry-run OK: ${{ steps.check.outputs.vn }} にパッチ適用可能"
 
+      - name: Upload patch check log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patch_check_log
+          path: patch_check.log
+          retention-days: 7
+
       - name: Download splits (Google Play, 日本語含む)
         if: env.SKIP != 'true'
         run: |
