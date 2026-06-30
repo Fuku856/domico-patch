@@ -45,6 +45,48 @@
 - `PatchSettingsEntry` が `containerTop` に「パッチ設定」行を追加（タグで冪等）し、
   `versionContain` に長押しリスナを付与。どちらも `PatchSettingsOpener` → `PatchSettingsDialog.show()`。
 
+## 5. 時間外チェックイン（裏機能・既定オフ）
+- 対象: `ui/HomeFragment.smali`（`smali_classes4`）、新規ヘルパ `patch/PatchCheckIn` /
+  `patch/PatchCheckInConfirm`。フラグ `PatchPrefs.checkinEnabled`（キー `checkin_outoftime`、**既定 false**）。
+- 注入A（ボタン再有効化）: `showUICheckIn` 内、`isCheckInTime()` 結果を渡す
+  `stateButton(Landroid/view/View;Z)V` 呼び出しの直後に
+  `PatchCheckIn.enableOutOfTime(btnView, dto, isCheckInTime)` を挿入。
+  ON かつ時間外（`isCheckInTime==false`）かつ未チェックイン（`getCheckIn()==0`）のときだけ
+  `setEnabled(true)`（alpha 0.5 のグレー見た目は維持）。アンカーは `->isCheckInTime()Z`
+  （HomeFragment 内で一意）→ 直後の `move-result`（bool reg）→ その reg を使う `stateButton`。
+
+```smali
+    invoke-direct {p0, v1, v3}, Lvn/com/bravesoft/androidapp/ui/HomeFragment;->stateButton(Landroid/view/View;Z)V
+    # domico-patch: allow out-of-time check-in (gated)
+    invoke-static {v1, p1, v3}, Lvn/com/bravesoft/androidapp/patch/PatchCheckIn;->enableOutOfTime(Landroid/view/View;Lvn/com/bravesoft/androidapp/model/MenuForDayDTO;Z)V
+```
+
+- 注入B（確認ゲート）: `checkInAction(MenuForDayDTO)` の `.locals` 直後に挿入。
+  `PatchCheckIn.confirmOutOfTime(this, dto)` が true（＝時間外・未チェックインで確認ダイアログ表示）
+  なら `return-void` で公式処理を中断。false なら公式どおり続行。
+
+```smali
+    # domico-patch: out-of-time check-in confirm gate
+    invoke-static {p0, p1}, Lvn/com/bravesoft/androidapp/patch/PatchCheckIn;->confirmOutOfTime(Landroidx/fragment/app/Fragment;Lvn/com/bravesoft/androidapp/model/MenuForDayDTO;)Z
+    move-result v0
+    if-eqz v0, :domico_checkin_continue
+    return-void
+    :domico_checkin_continue
+```
+
+- 確認ダイアログは純正 `AlertUtils.showAlertDialogCancel(ctx, true, msg, null, null, title, cb)` を再利用
+  （OK→`CallbackAlertDialog.actionDoneClick()`、キャンセル→dismiss のみ）。`cb` は
+  `PatchCheckInConfirm` で、OK 時に `CheckInDialog.Companion.newInstance(dto).show(childFM,"CheckInDialog")`。
+  食事名は `isBreakfast()`＋`isJapanFoodReserved()`/`isWesternFoodReserved()`（=公式 `CheckInDialog` と同じ判定）から
+  和食/洋食/朝食/夕食 を出す。和食/洋食の正しい表示と実チェックイン（`HomeModelView.checkIn(reservationId)`）は
+  公式 `CheckInDialog` がそのまま担う。
+- 設定: `PatchPrefs` に `checkinEnabled` フィールド追加、`load()` で `checkin_outoftime` を既定 false で読む。
+  Switch 初期値が既定オフを反映するよう `PatchPrefs.get` を 3 引数化（既定値受け取り）し、
+  `PatchPrefs.defaultOf(key)`（`checkin_outoftime` のみ false）を `PatchSettingsDialog.addRow` から使う。
+- サーバー影響: 送信は公式と同一（`POST v1/reservations/checkin`、ボディ `reservation_id` のみ）。
+  `is_checkin_time` はサーバー提供フラグで、サーバーが checkin でも時間窓を強制していれば時間外要求は
+  エラーで弾かれる（無害・無効）。成功する場合は時間外チェックインがサーバー記録に残る点に留意。
+
 ## ビルド方式: dex 差し替え（apktool 全体リビルドは使わない）
 apktool で `resources.arsc` / `AndroidManifest.xml` を再エンコードすると、一部端末（Xiaomi/HyperOS 等）が `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾く。そこで **外科的 dex 差し替え** に変更した。
 

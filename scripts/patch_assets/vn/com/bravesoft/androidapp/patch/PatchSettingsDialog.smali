@@ -96,7 +96,12 @@
 
     invoke-direct {v4, p0}, Landroid/widget/Switch;-><init>(Landroid/content/Context;)V
 
-    invoke-static {p0, p4}, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->get(Landroid/content/Context;Ljava/lang/String;)Z
+    # 既定値はキーごとに PatchPrefs.defaultOf が返す (裏機能の checkin_outoftime のみ OFF)。
+    invoke-static {p4}, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->defaultOf(Ljava/lang/String;)Z
+
+    move-result v6
+
+    invoke-static {p0, p4, v6}, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->get(Landroid/content/Context;Ljava/lang/String;Z)Z
 
     move-result v6
 
@@ -192,6 +197,14 @@
     const-string v3, "Firebase Analytics / Crashlytics / Performance と広告 ID の送信をブロック。（アプリ通知は維持）"
 
     const-string v4, "telemetry_off"
+
+    invoke-static {p0, v0, v2, v3, v4}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->addRow(Landroid/content/Context;Landroid/widget/LinearLayout;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+
+    const-string v2, "時間外チェックイン"
+
+    const-string v3, "受付時間外でもチェックインボタンを押せるようにし、確認後にチェックイン。（既定オフ）"
+
+    const-string v4, "checkin_outoftime"
 
     invoke-static {p0, v0, v2, v3, v4}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->addRow(Landroid/content/Context;Landroid/widget/LinearLayout;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
 
