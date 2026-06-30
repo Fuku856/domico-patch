@@ -457,6 +457,9 @@
     invoke-virtual {v3, v4}, Landroid/view/View;->setAlpha(F)V
 
     # switch = container.getChildAt(1)
+    # v3 is View (from previous getChildAt return) — cast to ViewGroup before dispatch
+    check-cast v3, Landroid/view/ViewGroup;
+
     const/4 v4, 0x1
 
     invoke-virtual {v3, v4}, Landroid/view/ViewGroup;->getChildAt(I)Landroid/view/View;

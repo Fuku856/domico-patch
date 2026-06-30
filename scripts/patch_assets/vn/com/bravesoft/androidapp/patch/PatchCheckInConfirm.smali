@@ -89,21 +89,32 @@
 
     goto :ret
 
-    # 通常パス: CheckInDialog を開く
+    # 通常パス: CheckInDialog を開く (callbackCheckIn をセットして成功後に完了ダイアログへ遷移)
     :normal_path
-    sget-object v2, Lvn/com/bravesoft/androidapp/ui/CheckInDialog;->Companion:Lvn/com/bravesoft/androidapp/ui/CheckInDialog$Companion;
+    # v1 を Fragment → HomeFragment へキャスト（access$getViewModel 呼び出しのため）
+    check-cast v1, Lvn/com/bravesoft/androidapp/ui/HomeFragment;
 
-    invoke-virtual {v2, v0}, Lvn/com/bravesoft/androidapp/ui/CheckInDialog$Companion;->newInstance(Lvn/com/bravesoft/androidapp/model/MenuForDayDTO;)Lvn/com/bravesoft/androidapp/ui/CheckInDialog;
+    # PatchCheckInCallback(homeFragment, dto) を生成
+    new-instance v2, Lvn/com/bravesoft/androidapp/patch/PatchCheckInCallback;
 
-    move-result-object v0
+    invoke-direct {v2, v1, v0}, Lvn/com/bravesoft/androidapp/patch/PatchCheckInCallback;-><init>(Lvn/com/bravesoft/androidapp/ui/HomeFragment;Lvn/com/bravesoft/androidapp/model/MenuForDayDTO;)V
+
+    # CheckInDialog を生成してコールバックをセット
+    sget-object v3, Lvn/com/bravesoft/androidapp/ui/CheckInDialog;->Companion:Lvn/com/bravesoft/androidapp/ui/CheckInDialog$Companion;
+
+    invoke-virtual {v3, v0}, Lvn/com/bravesoft/androidapp/ui/CheckInDialog$Companion;->newInstance(Lvn/com/bravesoft/androidapp/model/MenuForDayDTO;)Lvn/com/bravesoft/androidapp/ui/CheckInDialog;
+
+    move-result-object v3
+
+    invoke-virtual {v3, v2}, Lvn/com/bravesoft/androidapp/ui/CheckInDialog;->setCallbackCheckIn(Lvn/com/bravesoft/androidapp/event/CallbackCheckIn;)V
 
     invoke-virtual {v1}, Landroidx/fragment/app/Fragment;->getChildFragmentManager()Landroidx/fragment/app/FragmentManager;
 
     move-result-object v1
 
-    const-string v2, "CheckInDialog"
+    const-string v4, "CheckInDialog"
 
-    invoke-virtual {v0, v1, v2}, Lvn/com/bravesoft/androidapp/ui/CheckInDialog;->show(Landroidx/fragment/app/FragmentManager;Ljava/lang/String;)V
+    invoke-virtual {v3, v1, v4}, Lvn/com/bravesoft/androidapp/ui/CheckInDialog;->show(Landroidx/fragment/app/FragmentManager;Ljava/lang/String;)V
     :try_end_0
     .catchall {:try_start_0 .. :try_end_0} :catch_0
 
