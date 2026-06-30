@@ -14,6 +14,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      attach_tag:
+        description: "既存の patch-vX.Y.Z タグを指定すると、bump 判定を飛ばして、そのタグのコードで公式最新版にパッチを当てた APK をビルドし、そのリリースへ添付する(バックフィル用)。空欄なら通常動作。"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -94,16 +99,33 @@ jobs:
   # (公式版基準の v{vn}-patch とは別軸: ここはパッチ版基準の成果物)。
   build_apk:
     needs: release
-    if: needs.release.outputs.bumped == '1' && needs.release.outputs.exists == 'false'
+    # 通常: bump で新リリースを作ったとき。手動: attach_tag 指定でバックフィル。
+    # attach_tag の判定は workflow_dispatch のときだけ行う(push では inputs が
+    # 空のため、event 種別で短絡して push 時の誤発火を防ぐ)。
+    if: >-
+      (needs.release.outputs.bumped == '1' && needs.release.outputs.exists == 'false')
+      || (github.event_name == 'workflow_dispatch' && inputs.attach_tag != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          # release ジョブが push 済みの patch-vX.Y.Z タグを取り込み、build.py が
-          # 設定画面に埋め込むパッチ版(version.py 算出)を正しく解決できるようにする。
-          ref: main
+          # attach_tag 指定時はそのタグのコードでビルド(当時のパッチ挙動を忠実に再現)。
+          # 通常時は main(release ジョブが push 済みの patch-vX.Y.Z タグを含む)。
+          ref: ${{ inputs.attach_tag || 'main' }}
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Resolve target tag/version
+        id: target
+        run: |
+          if [ -n "${{ inputs.attach_tag }}" ]; then
+            TAG="${{ inputs.attach_tag }}"
+          else
+            TAG="patch-v${{ needs.release.outputs.version }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ver=${TAG#patch-v}" >> "$GITHUB_OUTPUT"
+          echo "target release=$TAG (patch version ${TAG#patch-v})"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -190,6 +212,8 @@ jobs:
       - name: Build patched APKs (dex-only patch)
         run: |
           BT=$(ls -d $ANDROID_SDK_ROOT/build-tools/35.0.0)
+          # 設定画面に埋め込むパッチ版は対象タグから明示指定する(version.py の
+          # release チャンネル表記と同形式: "vX.Y.Z / base <公式版>")。
           python3 scripts/build.py \
             --input download \
             --build-tools "$BT" \
@@ -198,20 +222,21 @@ jobs:
             --key-pass "${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}" \
             --alias "${{ secrets.KEY_ALIAS }}" \
             --app-version "${{ steps.probe.outputs.vn }}" \
-            --channel release
+            --patch-version "v${{ steps.target.outputs.ver }} / base ${{ steps.probe.outputs.vn }}"
 
       - name: Attach .apks to patch-v release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VER: ${{ needs.release.outputs.version }}
+          TAG: ${{ steps.target.outputs.tag }}
+          VER: ${{ steps.target.outputs.ver }}
           VN: ${{ steps.probe.outputs.vn }}
         run: |
           # 再実行に備え --clobber で同名アセットを上書きする。アセット名には
           # パッチ版と公式ベース版の両方を含め、どの組合せか分かるようにする。
           OUT="domico-v${VER}-base${VN}-patch.apks"
           cp "work/out/domico-${VN}-patch.apks" "$OUT"
-          gh release upload "patch-v$VER" "$OUT" --clobber
-          echo "attached $OUT to patch-v$VER"
+          gh release upload "$TAG" "$OUT" --clobber
+          echo "attached $OUT to $TAG"
 
       - name: Cleanup secrets
         if: always()
