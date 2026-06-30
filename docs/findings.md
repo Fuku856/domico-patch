@@ -34,6 +34,26 @@
 - **設定画面**: 新規 Activity はマニフェスト登録が要るため不可。プログラム生成 `Dialog` で実現。導線は `MenuFragment.init`（`MenuLayoutBinding` の `containerTop` / `versionContain`）に注入。
 - **対象クラスは全て classes4**: AlertUtils / MyApplication / FrameLayoutLoading / AppModule / MenuFragment。新規 `patch/*` も classes4 に同梱するため、現行の単一 dex 差し替え方式のままで完結する。
 
+## 時間外チェックインの調査（裏機能）
+- **グレーアウトの実体**: `ui/HomeFragment` `showUICheckIn` が
+  `ViewOrderFoodCheckInBinding.btnCheckIn` に対し `stateButton(btn, dto.isCheckInTime())` を呼ぶ。
+  `stateButton`(private final) は引数 false で `setEnabled(false)`＋`setAlpha(0.5f)`＝無効＋半透明。
+- **時間判定はサーバー側**: `MenuForDayDTO` の `isCheckInTime` / `isBeforeCheckIn` は JSON
+  (`is_checkin_time` / `before_check_in`) でサーバーが返すフラグ。クライアントは計算せず受け取るだけ。
+- **クリック導線**: btnCheckIn → `reactiveClick` → `checkInAction(MenuForDayDTO)`。
+  `getCheckIn()==0`（未チェックイン）で `CheckInDialog`、`==1`（済）で `CheckInCompletedDialog` を開く。
+- **CheckInDialog が表示と実行を両方持つ**: `setUpData` が `isBreakfast()` /
+  `isJapanFoodReserved()`(和食) / `isWesternFoodReserved()`(洋食) で食事種別アイコン・画像を出し、
+  `btnCheckIn` で `HomeModelView.checkIn(reservationId)` を実行（時間ゲートなし）。
+  → 「予約食事を正しく表示」要件はこのダイアログ再利用で満たせる。
+- **チェックイン API**: `ApiStores.checkIn` = `POST v1/reservations/checkin`、
+  ボディ `CheckInRequest { reservation_id:int }` のみ。クライアント時刻・時間窓は送らない。
+- **純正確認ダイアログ**: `AlertUtils.showAlertDialogCancel(Context, Z, message, ok?, cancel?, title, CallbackAlertDialog)`。
+  OK(-1)→`actionDoneClick()`、キャンセル(-2)→dismiss。`CallbackAlertDialog` はデフォルト実装ありの
+  Kotlin インタフェース（`actionDoneClick`/`actionCancelClick`）。
+- **方針**: 時間外＋未チェックイン時のみボタンを再有効化（見た目はグレー維持）し、タップで純正確認
+  ダイアログ→OK で公式 `CheckInDialog` を開く。表示・通信ロジックは新規に書かず公式を再利用。既定オフ。
+
 ## 実地知見（Xiaomi POCO F7 Pro / HyperOS）
 - **apktool 全体リビルドは不可**: `resources.arsc` / `AndroidManifest` を再エンコードした base は `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾かれた。無改変で再署名しただけのセットは入るため、原因は再署名でも端末ポリシーでもなく apktool のリソース再構築と判明。→ `classes4.dex` のみ差し替える方式（[patch_apk.py](../scripts/patch_apk.py)）で解決。
 - **日本語**: 文言は base になく `config.ja` スプリット側にある。base の既定は英語。

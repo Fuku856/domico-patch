@@ -52,6 +52,7 @@ REL_LOADING = os.path.join("vn", "com", "bravesoft", "androidapp", "views", "Fra
 REL_APPMODULE = os.path.join("vn", "com", "bravesoft", "androidapp", "di", "AppModule.smali")
 REL_MENU = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "MenuFragment.smali")
 REL_TABHOST = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "MainTabHostFragment.smali")
+REL_HOME = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "HomeFragment.smali")
 
 # マーカー(冪等判定)
 M_TOAST = "# domico-patch: gated login-toast click-through"
@@ -60,6 +61,8 @@ M_LOADING = "# domico-patch: gated loading-overlay click-through"
 M_INTERCEPTOR = "# domico-patch: register mutating-request input guard"
 M_MENU = "# domico-patch: settings entry (menu row)"
 M_NAV = "# domico-patch: settings entry (bottom-nav menu long-press)"
+M_CHECKIN_ENABLE = "# domico-patch: allow out-of-time check-in (gated)"
+M_CHECKIN_CONFIRM = "# domico-patch: out-of-time check-in confirm gate"
 
 
 def log(m):
@@ -432,6 +435,117 @@ def patch_maintabhost(base_dir, check_only):
     return True, True, "wired bottom-nav menu long-press to settings"
 
 
+# ---- patch 8: HomeFragment out-of-time check-in ---------------------------
+
+# showUICheckIn 内で isCheckInTime() の結果を stateButton へ渡す箇所をアンカーにする。
+# isCheckInTime()Z は HomeFragment 内で 1 箇所のみ(チェックインボタンの時間ゲート)。
+ISCHECKINTIME_RE = re.compile(r"->isCheckInTime\(\)Z\s*$")
+MOVERESULT_BOOL_RE = re.compile(r"^(\s*)move-result\s+(v\d+)\s*$")
+STATEBUTTON_RE = re.compile(
+    r"^(\s*)invoke-direct\s*\{(p\d+),\s*(v\d+),\s*(v\d+)\}\,\s*"
+    r"L[^;]+;->stateButton\(Landroid/view/View;Z\)V\s*$"
+)
+# apktool は `.locals`、baksmali は `.registers` を出す。実ビルド(patch_apk)は baksmali 経由
+# なので両方を受ける。`.registers` は params を含む総数(params は上位レジスタ)。
+REGDIRECTIVE_RE = re.compile(r"^(\s*)\.(locals|registers)\s+(\d+)\s*$")
+PKG_CHECKIN = "Lvn/com/bravesoft/androidapp/patch/PatchCheckIn;"
+DTO_DESC = "Lvn/com/bravesoft/androidapp/model/MenuForDayDTO;"
+
+
+def patch_homefragment_checkin(base_dir, check_only):
+    _root, path = find_smali_dir(base_dir, REL_HOME)
+    if not path:
+        return False, False, "HomeFragment.smali not found"
+    lines = read_lines(path)
+    joined = "".join(lines)
+    have_enable = M_CHECKIN_ENABLE in joined
+    have_confirm = M_CHECKIN_CONFIRM in joined
+    if have_enable and have_confirm:
+        return True, False, "already patched - skipped"
+
+    msgs = []
+    changed = False
+
+    # --- 注入A: グレーアウト時にボタンを再有効化 -----------------------------
+    if not have_enable:
+        # isCheckInTime() -> move-result <bool> -> stateButton(p0, <view>, <bool>)
+        ict_idx = next(
+            (i for i, ln in enumerate(lines) if ISCHECKINTIME_RE.search(ln)), None
+        )
+        if ict_idx is None:
+            return False, False, "anchor isCheckInTime()Z not found in HomeFragment"
+        bool_reg = bm_idx = None
+        for j in range(ict_idx + 1, min(ict_idx + 6, len(lines))):
+            m = MOVERESULT_BOOL_RE.match(lines[j])
+            if m:
+                bm_idx, bool_reg = j, m.group(2)
+                break
+        if bool_reg is None:
+            return False, False, "move-result after isCheckInTime() not found"
+        anchor = indent = view_reg = None
+        for k in range(bm_idx + 1, min(bm_idx + 20, len(lines))):
+            m = STATEBUTTON_RE.match(lines[k])
+            if m and m.group(4) == bool_reg:
+                anchor, indent, view_reg = k, m.group(1), m.group(3)
+                break
+        if anchor is None:
+            return False, False, "stateButton(isCheckInTime) anchor not found"
+        if check_only:
+            msgs.append(
+                f"would re-enable check-in btn (view={view_reg}, time={bool_reg}) [dry-run]"
+            )
+        else:
+            inj = [
+                f"{indent}{M_CHECKIN_ENABLE}\n",
+                f"{indent}invoke-static {{{view_reg}, p1, {bool_reg}}}, "
+                f"{PKG_CHECKIN}->enableOutOfTime(Landroid/view/View;{DTO_DESC}Z)V\n",
+            ]
+            lines[anchor + 1 : anchor + 1] = inj
+            changed = True
+            msgs.append(f"re-enabled check-in btn (view={view_reg}, time={bool_reg})")
+
+    # --- 注入B: checkInAction 冒頭の確認ゲート --------------------------------
+    if not have_confirm:
+        sig = ".method private final checkInAction(" + DTO_DESC + ")V"
+        start, end = method_bounds(lines, sig)
+        if start is None or end is None:
+            return False, False, "checkInAction(MenuForDayDTO) not found"
+        # checkInAction(MenuForDayDTO)V は非 static + 1 引数 = param レジスタ 2 個。
+        # スクラッチ v0 を確保するため: .locals は >=1、.registers は >=3 (= 2 params + v0)。
+        loc_idx = indent = None
+        for j in range(start, end + 1):
+            m = REGDIRECTIVE_RE.match(lines[j])
+            if m:
+                loc_idx, indent = j, m.group(1)
+                kind, n = m.group(2), int(m.group(3))
+                if kind == "locals" and n < 1:
+                    lines[j] = f"{indent}.locals 1\n"
+                elif kind == "registers" and n < 3:
+                    lines[j] = f"{indent}.registers 3\n"
+                break
+        if loc_idx is None:
+            return False, False, ".locals/.registers not found in checkInAction"
+        if check_only:
+            msgs.append("would inject confirm gate into checkInAction [dry-run]")
+        else:
+            inj = [
+                f"{indent}{M_CHECKIN_CONFIRM}\n",
+                f"{indent}invoke-static {{p0, p1}}, "
+                f"{PKG_CHECKIN}->confirmOutOfTime(Landroidx/fragment/app/Fragment;{DTO_DESC})Z\n",
+                f"{indent}move-result v0\n",
+                f"{indent}if-eqz v0, :domico_checkin_continue\n",
+                f"{indent}return-void\n",
+                f"{indent}:domico_checkin_continue\n",
+            ]
+            lines[loc_idx + 1 : loc_idx + 1] = inj
+            changed = True
+            msgs.append("injected confirm gate into checkInAction")
+
+    if changed:
+        write_lines(path, lines)
+    return True, changed, "; ".join(msgs) if msgs else "no-op"
+
+
 # ---- driver ----------------------------------------------------------------
 
 # (名前, 関数, 対象クラスの相対 smali パス)。
@@ -446,6 +560,7 @@ PATCHES = [
     ("interceptor", patch_appmodule, REL_APPMODULE),
     ("menu", patch_menufragment, REL_MENU),
     ("nav", patch_maintabhost, REL_TABHOST),
+    ("checkin", patch_homefragment_checkin, REL_HOME),
 ]
 
 
