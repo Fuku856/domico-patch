@@ -428,6 +428,49 @@
 
     invoke-static {p0, v2, v4, v5, v6}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->addRow(Landroid/content/Context;Landroid/widget/LinearLayout;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
 
+    # --- 5 行目: 開始時間で自動チェックイン (時間外チェックインの子機能, 既定オフ) ---
+    const-string v4, "開始時間で自動チェックイン"
+
+    const-string v5, "時間外確認後、チェックイン開始時間になったら自動送信。（既定オフ）"
+
+    const-string v6, "checkin_autocheckin"
+
+    invoke-static {p0, v2, v4, v5, v6}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->addRow(Landroid/content/Context;Landroid/widget/LinearLayout;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+
+    # 親 (時間外チェックイン) が OFF なら子スイッチをグレーアウト
+    # content layout の 8 番目 (0-indexed) の child = 5th row container
+    sget-boolean v3, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->checkinEnabled:Z
+
+    if-nez v3, :domico_autocheckin_enabled
+
+    const/16 v3, 0x8
+
+    invoke-virtual {v2, v3}, Landroid/view/ViewGroup;->getChildAt(I)Landroid/view/View;
+
+    move-result-object v3
+
+    if-eqz v3, :domico_autocheckin_enabled
+
+    # container.setAlpha(0.5f): 0.5f = 0x3F000000
+    const v4, 0x3F000000
+
+    invoke-virtual {v3, v4}, Landroid/view/View;->setAlpha(F)V
+
+    # switch = container.getChildAt(1)
+    const/4 v4, 0x1
+
+    invoke-virtual {v3, v4}, Landroid/view/ViewGroup;->getChildAt(I)Landroid/view/View;
+
+    move-result-object v3
+
+    if-eqz v3, :domico_autocheckin_enabled
+
+    const/4 v4, 0x0
+
+    invoke-virtual {v3, v4}, Landroid/view/View;->setEnabled(Z)V
+
+    :domico_autocheckin_enabled
+
     # --- フッター区切り線 (1px, #E0E0E0, topMargin 12dp) ---
     new-instance v4, Landroid/view/View;
 

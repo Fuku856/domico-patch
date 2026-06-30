@@ -64,6 +64,7 @@ M_NAV = "# domico-patch: settings entry (bottom-nav menu long-press)"
 M_CHECKIN_ENABLE = "# domico-patch: allow out-of-time check-in (gated)"
 M_CHECKIN_CONFIRM = "# domico-patch: out-of-time check-in confirm gate"
 M_CHECKIN_BYPASS = "# domico-patch: E1015 bypass interceptor"
+M_AUTOCHECKIN_FIRE = "# domico-patch: auto check-in fire on showUICheckIn"
 
 
 def log(m):
@@ -596,6 +597,45 @@ def patch_homefragment_checkin(base_dir, check_only):
     return True, changed, "; ".join(msgs) if msgs else "no-op"
 
 
+# ---- patch 10: HomeFragment auto check-in fire ----------------------------
+
+def patch_homefragment_autocheckin(base_dir, check_only):
+    _root, path = find_smali_dir(base_dir, REL_HOME)
+    if not path:
+        return False, False, "HomeFragment.smali not found"
+    lines = read_lines(path)
+    if M_AUTOCHECKIN_FIRE in "".join(lines):
+        return True, False, "already patched - skipped"
+
+    sig = ".method private final showUICheckIn(" + DTO_DESC + ")V"
+    start, end = method_bounds(lines, sig)
+    if start is None or end is None:
+        return False, False, "showUICheckIn(MenuForDayDTO) not found"
+
+    # 最後の return-void に注入してすべての終了パスをカバーする
+    ret_idx = indent = None
+    for j in range(end, start, -1):
+        m = re.match(r"^(\s*)return-void\s*$", lines[j])
+        if m:
+            ret_idx, indent = j, m.group(1)
+            break
+    if ret_idx is None:
+        return False, False, "return-void not found in showUICheckIn"
+
+    if check_only:
+        return True, False, "would inject checkAndFire into showUICheckIn [dry-run]"
+
+    PKG_AUTO = "Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;"
+    HOME_DESC = "Lvn/com/bravesoft/androidapp/ui/HomeFragment;"
+    inj = [
+        f"{indent}{M_AUTOCHECKIN_FIRE}\n",
+        f"{indent}invoke-static {{p0, p1}}, {PKG_AUTO}->checkAndFire({HOME_DESC}{DTO_DESC})V\n",
+    ]
+    lines[ret_idx:ret_idx] = inj
+    write_lines(path, lines)
+    return True, True, "injected checkAndFire into showUICheckIn"
+
+
 # ---- driver ----------------------------------------------------------------
 
 # (名前, 関数, 対象クラスの相対 smali パス)。
@@ -612,6 +652,7 @@ PATCHES = [
     ("menu", patch_menufragment, REL_MENU),
     ("nav", patch_maintabhost, REL_TABHOST),
     ("checkin", patch_homefragment_checkin, REL_HOME),
+    ("checkin-auto", patch_homefragment_autocheckin, REL_HOME),
 ]
 
 
