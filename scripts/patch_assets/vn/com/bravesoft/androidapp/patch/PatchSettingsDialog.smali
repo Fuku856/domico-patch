@@ -3,7 +3,7 @@
 .source "PatchSettingsDialog.java"
 
 # domico-patch: full-screen settings screen (no XML / no new Activity).
-# Header: yellow (#FFBD00) bar with "←" back button and "パッチ設定" title.
+# Header: yellow (#FFDD00) bar with "←" back button and "パッチ設定" title.
 # Body: one row per patch (Switch + title + description) with 16dp padding and
 # a thin separator line between rows. Footer shows the patch version and credit.
 # Persists toggles through PatchPrefs. Physical back key dismisses via Dialog default.
@@ -220,7 +220,7 @@
 
     invoke-virtual {v1, v2}, Landroid/view/View;->setBackgroundColor(I)V
 
-    # --- ヘッダーバー (HORIZONTAL, 高さ 56dp, 背景 #FFBD00) ---
+    # --- ヘッダーバー (HORIZONTAL, 高さ 56dp, 背景 #FFDD00) ---
     new-instance v2, Landroid/widget/LinearLayout;
 
     invoke-direct {v2, p0}, Landroid/widget/LinearLayout;-><init>(Landroid/content/Context;)V
@@ -233,7 +233,7 @@
 
     invoke-virtual {v2, v3}, Landroid/widget/LinearLayout;->setGravity(I)V
 
-    const v3, 0xFFFFBD00    # colorAccent
+    const v3, 0xFFFFDD00    # themeYellow
 
     invoke-virtual {v2, v3}, Landroid/view/View;->setBackgroundColor(I)V
 
