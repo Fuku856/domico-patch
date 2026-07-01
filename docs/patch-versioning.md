@@ -73,7 +73,7 @@ v0.3.0 / base v1.5.4
 |------|----|-----------|-----------|
 | `patch-v{X.Y.Z}` | `patch-v0.3.0` | **パッチ版**の確定（CHANGELOG 境界） | `release.yml`（main push 時） |
 | `v{versionName}-patch` | `v1.5.4-patch` | **ベース追従**ビルドの Release | `patch.yml`（公式更新検知時） |
-| `v{versionName}-dev` | `v1.5.4-dev` | dev プレリリース | `dev-prerelease.yml` |
+| `patch-v{X.Y.Z}-dev` | `patch-v0.3.0-dev` | dev プレリリース（パッチ版 X.Y.Z の検証）| `dev-prerelease.yml` |
 
 `version.py` と `cliff.toml` はバージョン境界として **`patch-v*` のみ**を見る
 （ベース追従タグは無視する）。
@@ -108,7 +108,7 @@ patch_smali.py  → PatchInfo.smali の VERSION フィールドを上書き
 | ワークフロー | チャンネル | 役割 |
 |--------------|-----------|------|
 | [`patch.yml`](../.github/workflows/patch.yml) | `release` | 公式更新を検知して本番 `.apks` をビルド・Release |
-| [`dev-prerelease.yml`](../.github/workflows/dev-prerelease.yml) | `dev` | dev のパッチを手動でプレリリース |
+| [`dev-prerelease.yml`](../.github/workflows/dev-prerelease.yml) | `dev` | dev のパッチを手動でプレリリース（bump あり or `force=true` 時のみビルド） |
 | [`release.yml`](../.github/workflows/release.yml) | — | main push 時に版算出 → CHANGELOG → `patch-v*` タグ + Release + APK 添付 |
 
 `release.yml` の動作：

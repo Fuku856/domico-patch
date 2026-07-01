@@ -7,6 +7,8 @@
 # even before load() runs.
 
 # static fields
+.field public static volatile autoCheckinEnabled:Z
+
 .field public static volatile checkinEnabled:Z
 
 .field public static volatile loadingEnabled:Z
@@ -65,8 +67,16 @@
 .method public static defaultOf(Ljava/lang/String;)Z
     .locals 1
 
-    # 裏機能 checkin_outoftime のみ既定 OFF。他フラグは既定 ON。
+    # 裏機能 checkin_outoftime / checkin_autocheckin は既定 OFF。他フラグは既定 ON。
     const-string v0, "checkin_outoftime"
+
+    invoke-virtual {v0, p0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+
+    move-result v0
+
+    if-nez v0, :off
+
+    const-string v0, "checkin_autocheckin"
 
     invoke-virtual {v0, p0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
 
@@ -74,6 +84,7 @@
 
     if-eqz v0, :on
 
+    :off
     const/4 v0, 0x0
 
     return v0
@@ -139,6 +150,16 @@
     move-result v1
 
     sput-boolean v1, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->checkinEnabled:Z
+
+    const-string v1, "checkin_autocheckin"
+
+    const/4 v2, 0x0
+
+    invoke-interface {v0, v1, v2}, Landroid/content/SharedPreferences;->getBoolean(Ljava/lang/String;Z)Z
+
+    move-result v1
+
+    sput-boolean v1, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->autoCheckinEnabled:Z
 
     return-void
 .end method
