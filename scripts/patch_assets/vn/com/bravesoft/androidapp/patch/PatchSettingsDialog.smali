@@ -503,7 +503,7 @@
 
     invoke-virtual {v2, v4}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
 
-    # --- クレジットタイトル (太字・中央揃え・13sp・グレー) ---
+    # --- クレジットタイトル (太字・中央揃え・13sp・黒) ---
     new-instance v4, Landroid/widget/TextView;
 
     invoke-direct {v4, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
@@ -512,7 +512,7 @@
 
     invoke-virtual {v4, v5}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
 
-    const v5, -0x777778    # 0xFF888888 gray
+    const v5, -0x1000000    # 0xFF000000 black
 
     invoke-virtual {v4, v5}, Landroid/widget/TextView;->setTextColor(I)V
 
@@ -552,7 +552,7 @@
 
     invoke-virtual {v2, v4}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
 
-    # --- 著作権 + バージョン (11sp・グレー・中央揃え) ---
+    # --- 著作権 + バージョン (11sp・黒・中央揃え) ---
     new-instance v4, Landroid/widget/TextView;
 
     invoke-direct {v4, p0}, Landroid/widget/TextView;-><init>(Landroid/content/Context;)V
@@ -585,7 +585,7 @@
 
     invoke-virtual {v4, v5}, Landroid/widget/TextView;->setText(Ljava/lang/CharSequence;)V
 
-    const v5, -0x777778    # gray
+    const v5, -0x1000000    # black
 
     invoke-virtual {v4, v5}, Landroid/widget/TextView;->setTextColor(I)V
 
