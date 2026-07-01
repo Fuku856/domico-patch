@@ -89,9 +89,9 @@ jobs:
           # CHANGELOG 先頭の当該バージョン節だけ抜き出してリリースノートにする。
           awk '/^## \[/{c++} c==1{print} c==2{exit}' CHANGELOG.md > RELEASE_NOTES.md
           if [ ! -s RELEASE_NOTES.md ]; then
-            gh release create "patch-v$VER" --title "domico-patch v$VER" --generate-notes
+            gh release create "patch-v$VER" --title "Domico Patch v$VER" --generate-notes
           else
-            gh release create "patch-v$VER" --title "domico-patch v$VER" --notes-file RELEASE_NOTES.md
+            gh release create "patch-v$VER" --title "Domico Patch v$VER" --notes-file RELEASE_NOTES.md
           fi
 
   # パッチ版が上がったとき、公式最新版にパッチを当てた APK をビルドして

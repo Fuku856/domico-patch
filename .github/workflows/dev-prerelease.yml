@@ -9,6 +9,18 @@ name: Dev Pre-release (manual)
 #   patch-v{X.Y.Z}-dev  ← このワークフロー（dev プレリリース）
 #   patch-v{X.Y.Z}      ← release.yml（main マージ後の本番リリース）
 #
+# 版の刻み方（version.py が SSOT）:
+#   直近の公式タグ patch-v{X.Y.Z} を基準に、以降のリリース対象コミット
+#   (feat/fix/perf/refactor/BREAKING)を1本ずつ累積適用して版を進める。
+#   よって main←dev マージ前の dev プレリリースは、新コミットが積まれるたびに
+#   0.3.1 → 0.3.2 → ... と刻まれる(0.3.9 の次は 0.3.10)。feat が入れば
+#   0.4.0 と minor が上がりパッチは 0 に戻る。dev タグ(patch-v*-dev)は
+#   基準にならないため、次の公式リリースは同じ累積結果に収束する。
+#
+# Releases 一覧の扱い:
+#   刻んだ版はそれぞれ別タグ(patch-v{X.Y.Z}-dev)として履歴に残す。
+#   同版で再実行した場合のみ、その版のリリースを作り直す(APK 差し替え)。
+#
 # bump 条件:
 #   patch-v* 以降に feat/fix/perf 等のコミットが無い場合はスキップ。
 #   force=true で強制実行可能。
@@ -193,9 +205,12 @@ jobs:
           TAG="patch-v${{ steps.pver.outputs.version }}-dev"
           FNAME="domico-patch-v${{ steps.pver.outputs.version }}-dev-base${{ steps.check.outputs.vn }}.apks"
           mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apks work/out/$FNAME
+          # dev プレリリースは版を刻む(0.3.1, 0.3.2, ...)たびに別タグとして残す。
+          # 削除するのは今回と同じ版のみ(コミットせず再実行して APK だけ差し替える場合の
+          # 作り直し)。過去版の patch-v*-dev リリースはそのまま履歴として保持する。
           gh release delete "$TAG" --yes 2>/dev/null || true
           gh release create "$TAG" "work/out/$FNAME" \
-            --title "[Preview] Patch v${{ steps.pver.outputs.version }} / Base ${{ steps.check.outputs.vn }}" \
+            --title "[Preview] Domico Patch v${{ steps.pver.outputs.version }}-dev (Base v${{ steps.check.outputs.vn }})" \
             --notes "Patch: v${{ steps.pver.outputs.version }}-dev  /  Base: ${{ steps.check.outputs.vn }} (versionCode ${{ steps.check.outputs.vc }})" \
             --generate-notes \
             --prerelease
