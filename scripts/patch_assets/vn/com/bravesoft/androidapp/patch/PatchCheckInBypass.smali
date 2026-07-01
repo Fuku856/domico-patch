@@ -48,6 +48,9 @@
         }
     .end annotation
 
+    # NOTE: 本メソッドは全リクエストに介入する。以下は対象2エンドポイント以外へ
+    # 副作用を及ぼさないための条件: (a) checkinEnabled ON (b) パスが
+    # */reservations/*checkin に一致 (c) 4xx (isSuccessful==false)。
     # 機能が OFF なら素通り
     sget-boolean v0, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->checkinEnabled:Z
 
@@ -62,7 +65,9 @@
     if-eqz v0, :ret
 
     :try_start_0
-    # URL パスに "checkin" が含まれるか（"check-" は含まない）
+    # 対象は v1/reservations/checkin (POST) と v1/reservations/{id}/checkin (GET) のみ。
+    # "/reservations/" を含み "/checkin" で終わるパスに厳密一致させ、無関係な
+    # エンドポイント(例: "recheckin" 等の部分一致)を誤って差し替えないようにする。
     invoke-virtual {v1}, Lokhttp3/Request;->url()Lokhttp3/HttpUrl;
 
     move-result-object v3
@@ -75,9 +80,17 @@
 
     move-result-object v3
 
-    const-string v4, "checkin"
+    const-string v4, "/reservations/"
 
     invoke-virtual {v3, v4}, Ljava/lang/String;->contains(Ljava/lang/CharSequence;)Z
+
+    move-result v4
+
+    if-eqz v4, :ret
+
+    const-string v4, "/checkin"
+
+    invoke-virtual {v3, v4}, Ljava/lang/String;->endsWith(Ljava/lang/String;)Z
 
     move-result v3
 
@@ -97,19 +110,20 @@
     if-eqz v3, :post_checkin
 
     # ---- (2) GET 受け取り情報: 合成 JSON で差し替え ----
-    # 合成データは消費一回(成功時も取り出して破棄し、stale を残さない)
-    invoke-static {}, Lvn/com/bravesoft/androidapp/patch/PatchCheckInInfo;->consume()Ljava/lang/String;
-
-    move-result-object v3
-
-    # サーバーが実データを返したなら素通り(合成は破棄)
+    # サーバーが実データを返したなら素通り(合成データは消費せず保持したままにする。
+    # 先に consume() すると、無関係な checkin GET がここを通っただけで
+    # 保留中の合成データが失われてしまうため、失敗時のみ消費する)
     invoke-virtual {v2}, Lokhttp3/Response;->isSuccessful()Z
 
     move-result v4
 
     if-nez v4, :ret
 
-    # 合成データが無ければエラーのまま素通り
+    # 合成データを消費。無ければエラーのまま素通り
+    invoke-static {}, Lvn/com/bravesoft/androidapp/patch/PatchCheckInInfo;->consume()Ljava/lang/String;
+
+    move-result-object v3
+
     if-eqz v3, :ret
 
     const-string v4, "application/json; charset=utf-8"

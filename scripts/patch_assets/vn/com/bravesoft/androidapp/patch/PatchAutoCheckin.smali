@@ -8,6 +8,8 @@
 # 瞬間に HomeModelView.checkIn() を自動呼び出しする。
 # Handler(mainLooper) で 30 秒ごとに getMenuForDay() をポーリングし、
 # フラグメントが GC された / 機能が OFF になったときは自動停止する。
+# run()/checkAndFire() は毎回 checkinEnabled も再チェックする(親フラグを実行時に
+# OFF にした場合、保留中のジョブを即座に無効化するため)。
 
 .implements Ljava/lang/Runnable;
 
@@ -42,6 +44,11 @@
     invoke-direct {v0, v1}, Landroid/os/Handler;-><init>(Landroid/os/Looper;)V
 
     sput-object v0, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->handler:Landroid/os/Handler;
+
+    # pendingReservationId の既定値は「保留なし」を表す -1(予約 ID 0 と衝突させない)
+    const/4 v0, -0x1
+
+    sput v0, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->pendingReservationId:I
 
     return-void
 
@@ -92,9 +99,12 @@
 .method public static clearPending()V
     .locals 2
 
-    const/4 v0, 0x0
+    # pendingReservationId は「保留なし」を -1 で表す(予約 ID 0 との衝突を避ける)
+    const/4 v0, -0x1
 
     sput v0, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->pendingReservationId:I
+
+    const/4 v0, 0x0
 
     sput-object v0, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->pendingFragment:Ljava/lang/ref/WeakReference;
 
@@ -123,9 +133,21 @@
 
     if-eqz v0, :done
 
+    # 親フラグ(時間外チェックイン本体)が OFF になっていたら保留ごと破棄して停止
+    sget-boolean v0, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->checkinEnabled:Z
+
+    if-nez v0, :parent_ok
+
+    invoke-static {}, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->clearPending()V
+
+    goto :done
+
+    :parent_ok
     sget v0, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->pendingReservationId:I
 
-    if-eqz v0, :done
+    const/4 v1, -0x1
+
+    if-eq v0, v1, :done
 
     sget-object v1, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->pendingFragment:Ljava/lang/ref/WeakReference;
 
@@ -179,9 +201,21 @@
 
     if-eqz v0, :ret
 
+    # 親フラグ(時間外チェックイン本体)が OFF になっていたら保留ごと破棄して停止
+    sget-boolean v0, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->checkinEnabled:Z
+
+    if-nez v0, :parent_ok
+
+    invoke-static {}, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->clearPending()V
+
+    goto :ret
+
+    :parent_ok
     sget v0, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->pendingReservationId:I
 
-    if-eqz v0, :ret
+    const/4 v2, -0x1
+
+    if-eq v0, v2, :ret
 
     # v0 = pending reservation id
 

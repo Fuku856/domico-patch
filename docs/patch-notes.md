@@ -140,9 +140,12 @@
   （＝サーバーに正規のチェックインとして記録される）。
 - **停止条件**（`clearPending()` が呼ばれ以後ポーリング打ち切り）: (a) 対象予約が既にチェックイン済み
   (`getCheckIn()!=0`)、(b) 保留中の予約IDと一致しない、(c) `autoCheckinEnabled` が OFF になった、
-  (d) `Fragment.isAdded()==false`（画面遷移・アプリ終了等で `HomeFragment` が破棄）。
-  `pendingFragment` は `WeakReference` 保持のため、`HomeFragment` インスタンスが GC されると保留も
-  暗黙に消える（次にホーム画面を開くと再度 `showUICheckIn`→ボタン押下からやり直しになる）。
+  (d) `Fragment.isAdded()==false`（画面遷移・アプリ終了等で `HomeFragment` が破棄）、
+  (e) 親フラグ `checkinEnabled`（時間外チェックイン本体）が OFF になった。(e) は `run()`/
+  `checkAndFire()` 双方が毎回再チェックし、検知した時点で即座に `clearPending()` を呼んで保留を破棄する
+  （親を OFF にした後も保留中ジョブがバックグラウンドで生き続け、次の時間内到達時に無断でチェックインが
+  発火することを防ぐ）。`pendingFragment` は `WeakReference` 保持のため、`HomeFragment` インスタンスが
+  GC されると保留も暗黙に消える（次にホーム画面を開くと再度 `showUICheckIn`→ボタン押下からやり直しになる）。
 - **既知の制限**: 自動送信が発火しても `CheckInDialog`/`CheckInCompletedDialog` は一切開かれない。
   ユーザーが受け取る通知は最初の Toast のみで、実際に送信・成功したかどうかを確認する UI 通知はない。
   完了確認はホーム画面のボタン状態変化（グレーアウト解除→チェックイン済み表示）を見るしかない。
