@@ -86,6 +86,8 @@
 - サーバー影響: 送信は公式と同一（`POST v1/reservations/checkin`、ボディ `reservation_id` のみ）。
   `is_checkin_time` はサーバー提供フラグで、サーバーが checkin でも時間窓を強制していれば時間外要求は
   エラーで弾かれる（無害・無効）。成功する場合は時間外チェックインがサーバー記録に残る点に留意。
+  **つまり時間外にボタンを押しても実際の POST は必ずサーバーへ送信される**（クライアント側だけで
+  完結する見せかけの送信ではない）。実運用では下記バイパスが対応する `E1015` で拒否されるのが通常経路。
 - ネットワーク差し替え（`patch/PatchCheckInBypass`, OkHttp Interceptor・`checkinEnabled` ゲート）:
   - 送信: `POST */checkin` が 4xx かつボディに `E1015` を含む場合のみ HTTP 200 + 空 `BaseResponse`
     （`{"code":"","message":""}`）に差し替え、アプリを成功扱いにして `CheckInDialog` の
@@ -102,6 +104,48 @@
     `MenuForDayDTO.isBreakfast()`→朝食=1/夕食=2、`isJapanFoodReserved()`→和食=1/洋食=2。
   - 既知の制限: 合成 `date` は端末現在日付（`yyyy-MM-dd`）。日付跨ぎ（深夜の前日夕食チェックイン等）では
     表示日がずれ得る。受け取り画面はすべて端末側合成でサーバーにチェックイン記録は残らない。
+  - **注意（「再現」ではなく「偽装」）**: GET リクエスト自体は本物のサーバー通信で、サーバーは正規に
+    4xx を返している（サーバー側で本当に失敗している）。表示されるアバター/氏名/部屋番号/食事種別は
+    サーバーが返した値ではなく、端末内に既にあるデータから作った JSON を、通信結果の中身だけ差し替えて
+    アプリに「200 OK で本物のサーバー応答が来た」と誤認させているもの。データを正しく再現しているのでは
+    なく、応答そのものを偽装している点を区別すること。
+
+## 6. 時間外チェックイン: 開始時間で自動送信（既定オフ・親フラグ依存）
+- 対象: 新規ヘルパ `patch/PatchAutoCheckin`。`PatchCheckInConfirm.actionDoneClick()`（時間外確認
+  ダイアログの OK コールバック）を分岐。フラグ `PatchPrefs.autoCheckinEnabled`（既定 false）。
+  親フラグ `checkinEnabled`（時間外チェックイン本体）が OFF の場合は設定画面でグレーアウトし機能しない。
+- **OK 押下直後の分岐**: `autoCheckinEnabled` ON かつ `isCheckInTime()==false` のときは、公式
+  `CheckInDialog`（食事内容・和洋食を表示する確認画面）を**開かない**。代わりに
+  `PatchAutoCheckin.setPending(homeFragment, reservationId)` で予約IDを保持し、
+  Toast「チェックイン時間になったら自動送信します」を表示して終了する。
+  → **仕様どおりの動作**: 自動送信 ON で時間外に押した場合、食事画面が出ないのはバグではなく、
+  この時点ではまだチェックインを送信しない（送信は開始時刻到達後）ための意図的な分岐。
+  **なぜ開かないか**: 公式 `CheckInDialog` は「表示」と「送信実行」が一体（内部 `btnCheckIn` タップで
+  即 `checkIn()` が呼ばれる）で、公式には「後で自動送信」する仕組みが無い。OK 直後に開くと
+  (a) ユーザーがそのまま押せば時間外送信（＝E1015 バイパス経由）になり自動送信の意味がなくなる、
+  (b) 開始時刻まで（数時間）ダイアログを開きっぱなしにするとその間他の操作ができない、
+  (c) `CheckInDialog` 内部に遅延実行ロジックを組み込むのはより侵襲的な改変になる、という問題がある。
+  そのため OK 時点ではダイアログを出さず保留のみ行い、実送信は UI を介さないバックグラウンド発火にした。
+- **`autoCheckinEnabled` が OFF の場合**（既定）: 上記分岐に入らず常に `:normal_path` を通る。時間外
+  かどうかに関わらず即座に公式 `CheckInDialog`（食事画面）が開き、ユーザーが手動でボタンを押して送信する
+  ＝自動送信を追加する前の「5. 時間外チェックイン」単体の挙動そのまま。
+- **ポーリングと自動発火**: `Handler(mainLooper)` が 30 秒ごとに `run()` を実行し
+  `HomeModelView.getMenuForDay()` で最新データを取得し直す。その結果 `showUICheckIn` が再実行される
+  たびに `PatchAutoCheckin.checkAndFire(homeFragment, dto)` が呼ばれ、`isCheckInTime()==true` に
+  変わった瞬間（かつ保留中の予約IDと一致・未チェックイン）に `clearPending()` →
+  `HomeModelView.checkIn(reservationId)` を直接呼び出す。**この自動発火経路も `CheckInDialog` を
+  開かない**（食事確認画面なしでバックグラウンド送信される）。
+- **サーバーへの送信**: 自動発火は `isCheckInTime()==true`（時間内）になってから送るため、通常は
+  `E1015` を返さず、`PatchCheckInBypass` のフェイク差し替えを経由しない公式そのままの成功応答になる
+  （＝サーバーに正規のチェックインとして記録される）。
+- **停止条件**（`clearPending()` が呼ばれ以後ポーリング打ち切り）: (a) 対象予約が既にチェックイン済み
+  (`getCheckIn()!=0`)、(b) 保留中の予約IDと一致しない、(c) `autoCheckinEnabled` が OFF になった、
+  (d) `Fragment.isAdded()==false`（画面遷移・アプリ終了等で `HomeFragment` が破棄）。
+  `pendingFragment` は `WeakReference` 保持のため、`HomeFragment` インスタンスが GC されると保留も
+  暗黙に消える（次にホーム画面を開くと再度 `showUICheckIn`→ボタン押下からやり直しになる）。
+- **既知の制限**: 自動送信が発火しても `CheckInDialog`/`CheckInCompletedDialog` は一切開かれない。
+  ユーザーが受け取る通知は最初の Toast のみで、実際に送信・成功したかどうかを確認する UI 通知はない。
+  完了確認はホーム画面のボタン状態変化（グレーアウト解除→チェックイン済み表示）を見るしかない。
 
 ## ビルド方式: dex 差し替え（apktool 全体リビルドは使わない）
 apktool で `resources.arsc` / `AndroidManifest.xml` を再エンコードすると、一部端末（Xiaomi/HyperOS 等）が `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾く。そこで **外科的 dex 差し替え** に変更した。

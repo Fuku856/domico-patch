@@ -428,10 +428,10 @@
 
     invoke-static {p0, v2, v4, v5, v6}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->addRow(Landroid/content/Context;Landroid/widget/LinearLayout;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
 
-    # --- 5 行目: 開始時間で自動チェックイン (時間外チェックインの子機能, 既定オフ) ---
-    const-string v4, "開始時間で自動チェックイン"
+    # --- 5 行目: 開始時間に自動チェックイン (時間外チェックインの子機能, 既定オフ) ---
+    const-string v4, "開始時間に自動チェックイン (ハイリスク)"
 
-    const-string v5, "時間外確認後、チェックイン開始時間になったら自動送信。（既定オフ）"
+    const-string v5, "時間外確認後、チェックイン開始時間になったら自動送信。ボーリングするため、サーバー側に発覚するリスクがあります。（既定オフ）"
 
     const-string v6, "checkin_autocheckin"
 
