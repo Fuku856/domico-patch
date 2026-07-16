@@ -127,7 +127,8 @@
 
     invoke-virtual {v5, v0}, Landroid/view/View;->setOnLongClickListener(Landroid/view/View$OnLongClickListener;)V
 
-    # padding = 16dp (density スケール)
+    # padding: 左右 12dp / 上下 10dp。ButtonView(paddingStart 12dp)と
+    # contentDiv(上下マージン 10dp)に合わせ、他行と行高・左インセットを揃える。
     invoke-virtual {v4}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
 
     move-result-object v4
@@ -138,13 +139,19 @@
 
     iget v4, v4, Landroid/util/DisplayMetrics;->density:F
 
-    const/high16 v6, 0x41800000    # 16.0f
+    const/high16 v6, 0x41400000    # 12.0f (左右)
 
     mul-float/2addr v6, v4
 
     float-to-int v6, v6
 
-    invoke-virtual {v5, v6, v6, v6, v6}, Landroid/view/View;->setPadding(IIII)V
+    const/high16 v1, 0x41200000    # 10.0f (上下)
+
+    mul-float/2addr v1, v4
+
+    float-to-int v1, v1
+
+    invoke-virtual {v5, v6, v1, v6, v1}, Landroid/view/View;->setPadding(IIII)V
 
     const/4 v4, 0x2
 
@@ -196,8 +203,8 @@
 
     invoke-virtual {v5, v8, v6, v6, v6}, Landroid/widget/TextView;->setCompoundDrawables(Landroid/graphics/drawable/Drawable;Landroid/graphics/drawable/Drawable;Landroid/graphics/drawable/Drawable;Landroid/graphics/drawable/Drawable;)V
 
-    # アイコンとテキストの間隔 8dp
-    const/high16 v0, 0x41000000    # 8.0f
+    # アイコンとテキストの間隔 10dp (contentDiv の marginStart に合わせる)
+    const/high16 v0, 0x41200000    # 10.0f
 
     mul-float/2addr v0, v9
 
