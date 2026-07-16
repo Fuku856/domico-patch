@@ -474,6 +474,16 @@
 
     :domico_autocheckin_enabled
 
+    # --- 6 行目: 受信メッセージをファイルに保存 (デバッグ, 既定オフ) ---
+    # この行はグレーアウト判定(getChildAt 0x8)より後に追加し、child index を乱さない。
+    const-string v4, "受信メッセージをファイルに保存 (デバッグ)"
+
+    const-string v5, "受信した通知の全内容を端末内ファイルに追記保存します(本文の調査用)。保存先はアプリの外部データ領域。（既定オフ）"
+
+    const-string v6, "push_debug_log"
+
+    invoke-static {p0, v2, v4, v5, v6}, Lvn/com/bravesoft/androidapp/patch/PatchSettingsDialog;->addRow(Landroid/content/Context;Landroid/widget/LinearLayout;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+
     # --- フッター区切り線 (1px, #E0E0E0, topMargin 12dp) ---
     new-instance v4, Landroid/view/View;
 

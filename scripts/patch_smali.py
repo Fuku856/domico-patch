@@ -53,6 +53,7 @@ REL_APPMODULE = os.path.join("vn", "com", "bravesoft", "androidapp", "di", "AppM
 REL_MENU = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "MenuFragment.smali")
 REL_TABHOST = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "MainTabHostFragment.smali")
 REL_HOME = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "HomeFragment.smali")
+REL_FCM = os.path.join("vn", "com", "bravesoft", "androidapp", "service", "MyFirebaseMessagingService.smali")
 
 # マーカー(冪等判定)
 M_TOAST = "# domico-patch: gated login-toast click-through"
@@ -65,6 +66,7 @@ M_CHECKIN_ENABLE = "# domico-patch: allow out-of-time check-in (gated)"
 M_CHECKIN_CONFIRM = "# domico-patch: out-of-time check-in confirm gate"
 M_CHECKIN_BYPASS = "# domico-patch: E1015 bypass interceptor"
 M_AUTOCHECKIN_FIRE = "# domico-patch: auto check-in fire on showUICheckIn"
+M_PUSHLOG = "# domico-patch: dump push payload to on-device file (gated)"
 
 
 def log(m):
@@ -624,6 +626,51 @@ def patch_homefragment_autocheckin(base_dir, check_only):
     return True, True, "injected checkAndFire into showUICheckIn"
 
 
+# ---- patch 11: MyFirebaseMessagingService push payload dump ----------------
+
+# onMessageReceived の invoke-super 直後に PatchPushDump.dump(this, remoteMessage)
+# を差し込む。この位置なら p1(RemoteMessage)は未破壊。dump は "push_debug_log"
+# プレフが true のときだけ端末内ファイルへ追記する(既定オフ)。
+SUPER_ONMSG_RE = re.compile(
+    r"^(\s*)invoke-super\s*\{p0,\s*p1\}\,\s*"
+    r"Lcom/google/firebase/messaging/FirebaseMessagingService;->"
+    r"onMessageReceived\(Lcom/google/firebase/messaging/RemoteMessage;\)V\s*$"
+)
+
+
+def patch_pushlog(base_dir, check_only):
+    _root, path = find_smali_dir(base_dir, REL_FCM)
+    if not path:
+        return False, False, "MyFirebaseMessagingService.smali not found"
+    lines = read_lines(path)
+    start, end = method_bounds(lines, ".method public onMessageReceived(")
+    if start is None or end is None:
+        return False, False, "onMessageReceived(RemoteMessage) not found"
+    seg = lines[start : end + 1]
+    if M_PUSHLOG in "".join(seg):
+        return True, False, "already patched - skipped"
+    anchor = indent = None
+    for j, ln in enumerate(seg):
+        m = SUPER_ONMSG_RE.match(ln)
+        if m:
+            anchor, indent = j, m.group(1)
+            break
+    if anchor is None:
+        return False, False, "anchor invoke-super onMessageReceived not found"
+    if check_only:
+        return True, False, "would inject PatchPushDump.dump into onMessageReceived [dry-run]"
+    inj = [
+        f"{indent}{M_PUSHLOG}\n",
+        f"{indent}invoke-static {{p0, p1}}, "
+        f"Lvn/com/bravesoft/androidapp/patch/PatchPushDump;->"
+        f"dump(Landroid/content/Context;Lcom/google/firebase/messaging/RemoteMessage;)V\n",
+    ]
+    seg[anchor + 1 : anchor + 1] = inj
+    lines[start : end + 1] = seg
+    write_lines(path, lines)
+    return True, True, "injected PatchPushDump.dump into onMessageReceived"
+
+
 # ---- driver ----------------------------------------------------------------
 
 # (名前, 関数, 対象クラスの相対 smali パス)。
@@ -641,6 +688,7 @@ PATCHES = [
     ("nav", patch_maintabhost, REL_TABHOST),
     ("checkin", patch_homefragment_checkin, REL_HOME),
     ("checkin-auto", patch_homefragment_autocheckin, REL_HOME),
+    ("pushlog", patch_pushlog, REL_FCM),
 ]
 
 

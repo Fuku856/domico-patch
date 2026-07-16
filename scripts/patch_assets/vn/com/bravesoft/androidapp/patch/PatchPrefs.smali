@@ -67,7 +67,7 @@
 .method public static defaultOf(Ljava/lang/String;)Z
     .locals 1
 
-    # 裏機能 checkin_outoftime / checkin_autocheckin は既定 OFF。他フラグは既定 ON。
+    # 裏機能 checkin_outoftime / checkin_autocheckin と デバッグ push_debug_log は既定 OFF。他フラグは既定 ON。
     const-string v0, "checkin_outoftime"
 
     invoke-virtual {v0, p0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
@@ -77,6 +77,14 @@
     if-nez v0, :off
 
     const-string v0, "checkin_autocheckin"
+
+    invoke-virtual {v0, p0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+
+    move-result v0
+
+    if-nez v0, :off
+
+    const-string v0, "push_debug_log"
 
     invoke-virtual {v0, p0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
 
