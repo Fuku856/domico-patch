@@ -5,13 +5,21 @@
 このプロジェクトの GitHub リリース(v{ベース版}-patch)は「公式 Domico の更新追従」
 であり、パッチ自身のバージョンとは別軸。そこでパッチ版は git 履歴から独立に算出する:
 
-  - 基準(baseline): `patch-v*` タグのうち最大セムバー(無ければ 0.0.0)。
-  - 増分(bump): 基準タグ以降のコミットメッセージ種別で決定。
-      `type!:` もしくは本文に `BREAKING CHANGE` -> major
-      `feat:`                                   -> minor
-      `fix:` / `perf:` / `refactor:`            -> patch
-      それ以外のみ(docs/ci/chore 等)            -> 据え置き(基準そのまま)
+  - 基準(baseline): `patch-v{X.Y.Z}` タグのうち最大セムバー(無ければ 0.0.0)。
+      `patch-v*-dev`(dev プレリリース)は `_TAG_RE` が弾くため基準にならない。
+  - 増分(bump): 基準タグ以降のリリース対象コミットを 1 本ずつ累積適用する
+      (最高レベルを 1 回だけ適用する旧方式ではない。詳細は `_apply_bumps`)。
+      各コミットのレベル判定:
+        `type!:` もしくは本文に `BREAKING CHANGE` -> major (M+1,0,0)
+        `feat:`                                   -> minor (M,m+1,0)
+        `fix:` / `perf:` / `refactor:`            -> patch (M,m,p+1)
+        それ以外(docs/ci/chore 等)                -> スキップ(版を進めない)
+      よってリリース対象コミット本数だけ patch が刻まれる(v0.3.1, 0.3.2, ...)。
   - 表示(display): `v{X.Y.Z}[-dev+g{sha}[.dirty]][ / base v{app}]`
+
+前提: dev→main のマージは squash ではなくマージコミットで行うこと。累積 bump は
+`{基準タグ}..HEAD` の全コミットを数えるため、squash すると main 側で本数が潰れ、
+dev プレリリースで刻んだ版と最終リリース版が食い違う(発散する)。
 
 タグ作成(リリース確定)は CI(.github/workflows/release.yml の git-cliff)が行い、
 ここはタグを「読む」だけ。タグが無くても次版を算出して表示できる。
