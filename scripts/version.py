@@ -5,13 +5,21 @@
 このプロジェクトの GitHub リリース(v{ベース版}-patch)は「公式 Domico の更新追従」
 であり、パッチ自身のバージョンとは別軸。そこでパッチ版は git 履歴から独立に算出する:
 
-  - 基準(baseline): `patch-v*` タグのうち最大セムバー(無ければ 0.0.0)。
-  - 増分(bump): 基準タグ以降のコミットメッセージ種別で決定。
-      `type!:` もしくは本文に `BREAKING CHANGE` -> major
-      `feat:`                                   -> minor
-      `fix:` / `perf:` / `refactor:`            -> patch
-      それ以外のみ(docs/ci/chore 等)            -> 据え置き(基準そのまま)
+  - 基準(baseline): `patch-v{X.Y.Z}` タグのうち最大セムバー(無ければ 0.0.0)。
+      `patch-v*-dev`(dev プレリリース)は `_TAG_RE` が弾くため基準にならない。
+  - 増分(bump): 基準タグ以降のリリース対象コミットを 1 本ずつ累積適用する
+      (最高レベルを 1 回だけ適用する旧方式ではない。詳細は `_apply_bumps`)。
+      各コミットのレベル判定:
+        `type!:` もしくは本文に `BREAKING CHANGE` -> major (M+1,0,0)
+        `feat:`                                   -> minor (M,m+1,0)
+        `fix:` / `perf:` / `refactor:`            -> patch (M,m,p+1)
+        それ以外(docs/ci/chore 等)                -> スキップ(版を進めない)
+      よってリリース対象コミット本数だけ patch が刻まれる(v0.3.1, 0.3.2, ...)。
   - 表示(display): `v{X.Y.Z}[-dev+g{sha}[.dirty]][ / base v{app}]`
+
+前提: dev→main のマージは squash ではなくマージコミットで行うこと。累積 bump は
+`{基準タグ}..HEAD` の全コミットを数えるため、squash すると main 側で本数が潰れ、
+dev プレリリースで刻んだ版と最終リリース版が食い違う(発散する)。
 
 タグ作成(リリース確定)は CI(.github/workflows/release.yml の git-cliff)が行い、
 ここはタグを「読む」だけ。タグが無くても次版を算出して表示できる。
@@ -79,33 +87,53 @@ def _commit_messages_since(tag):
     return [c.strip() for c in out.split("\x1e") if c.strip()]
 
 
-def _bump_level(messages):
-    """コミット群から必要な増分レベルを返す: 'major'>'minor'>'patch'>None。"""
-    level = None
+_TYPE_LEVEL = {"feat": "minor", "fix": "patch", "perf": "patch", "refactor": "patch"}
+
+
+def _commit_level(msg):
+    """1 コミットの増分レベルを返す: 'major'|'minor'|'patch'|None。"""
+    header = msg.splitlines()[0] if msg else ""
+    m = _HEADER_RE.match(header)
+    breaking = "BREAKING CHANGE" in msg or "BREAKING-CHANGE" in msg
+    if m and m.group("bang"):
+        breaking = True
+    if breaking:
+        return "major"
+    if not m:
+        return None
+    return _TYPE_LEVEL.get(m.group("type").lower())
+
+
+def _apply_bumps(base, messages_newest_first):
+    """基準版に各コミットの増分を古い順へ累積適用し、(最終版, 最高レベル) を返す。
+
+    セムバー標準どおり上位を上げたら下位はリセットする:
+      major -> (M+1, 0, 0) / minor -> (M, m+1, 0) / patch -> (M, m, p+1)
+
+    従来の「基準以降で最高レベルを 1 回だけ適用」と違い、リリース対象コミット
+    1 本ごとに版を進める(=コミット本数だけ単調増加)。これにより main←dev
+    マージ前の dev プレリリースは、新しいコミットが積まれるたびに
+    パッチ番号を刻む(v0.3.1, 0.3.2, ...)。パッチ番号は単なる整数なので
+    0.3.9 の次は 0.3.10 と桁上がりせず続く。feat が入れば minor が上がり
+    パッチは 0 に戻る。基準タグ(patch-v*)は公式リリース時のみ付くため、
+    dev プレリリースのタグ(patch-v*-dev)は基準を汚さない。
+    """
+    M, m, p = base
     rank = {"patch": 1, "minor": 2, "major": 3}
-
-    def raise_to(new):
-        nonlocal level
-        if level is None or rank[new] > rank[level]:
-            level = new
-
-    for msg in messages:
-        header = msg.splitlines()[0] if msg else ""
-        m = _HEADER_RE.match(header)
-        breaking = "BREAKING CHANGE" in msg or "BREAKING-CHANGE" in msg
-        if m and m.group("bang"):
-            breaking = True
-        if breaking:
-            raise_to("major")
+    top = None
+    for msg in reversed(messages_newest_first):  # git log は新しい順 -> 古い順に再生
+        lvl = _commit_level(msg)
+        if lvl == "major":
+            M, m, p = M + 1, 0, 0
+        elif lvl == "minor":
+            m, p = m + 1, 0
+        elif lvl == "patch":
+            p = p + 1
+        else:
             continue
-        if not m:
-            continue
-        t = m.group("type").lower()
-        if t == "feat":
-            raise_to("minor")
-        elif t in ("fix", "perf", "refactor"):
-            raise_to("patch")
-    return level
+        if top is None or rank[lvl] > rank[top]:
+            top = lvl
+    return (M, m, p), top
 
 
 def next_version():
@@ -114,21 +142,12 @@ def next_version():
       base    : (M,m,p)   基準タグの版
       tag     : str|None  基準タグ
       version : (M,m,p)   算出した次版(増分なしなら base と同じ)
-      level   : str|None  増分レベル
+      level   : str|None  適用した増分の最高レベル
       bumped  : bool      base から進んだか
     """
     base, tag = latest_tag()
     msgs = _commit_messages_since(tag)
-    level = _bump_level(msgs)
-    M, m, p = base
-    if level == "major":
-        nxt = (M + 1, 0, 0)
-    elif level == "minor":
-        nxt = (M, m + 1, 0)
-    elif level == "patch":
-        nxt = (M, m, p + 1)
-    else:
-        nxt = base
+    nxt, level = _apply_bumps(base, msgs)
     return {
         "base": base, "tag": tag, "version": nxt,
         "level": level, "bumped": nxt != base,

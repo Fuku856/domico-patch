@@ -189,7 +189,7 @@ jobs:
           gh release delete "${{ steps.check.outputs.official_tag }}" --yes 2>/dev/null || true
           gh release create "${{ steps.check.outputs.official_tag }}" \
             work/official/domico-${{ steps.check.outputs.vn }}-official.apks \
-            --title "Domico ${{ steps.check.outputs.vn }}（Official mirror）" \
+            --title "[Official] Domico v${{ steps.check.outputs.vn }}" \
             --notes "Base Version: ${{ steps.check.outputs.vn }} (versionCode ${{ steps.check.outputs.vc }})" \
             --latest=false
         env:
@@ -244,7 +244,7 @@ jobs:
           # (インストール方法やパッチ説明は README / docs に集約し、ここには載せない)
           gh release create "${{ steps.check.outputs.tag }}" \
             work/out/domico-${{ steps.check.outputs.vn }}-patch.apks \
-            --title "Domico ${{ steps.check.outputs.vn }} Patched" \
+            --title "[Patched] Domico v${{ steps.check.outputs.vn }}" \
             --notes "Base Version: ${{ steps.check.outputs.vn }} (versionCode ${{ steps.check.outputs.vc }})" \
             --generate-notes
         env:
