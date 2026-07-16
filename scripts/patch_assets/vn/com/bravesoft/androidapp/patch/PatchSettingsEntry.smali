@@ -10,6 +10,11 @@
 # NestedScrollView) — appending there pushes the row below the scroll view and
 # off-screen. The secondary entry is a long-press on the bottom-nav "メニュー"
 # tab (see installNav), replacing the old version-row long-press.
+# A divider line (1dp / #F0F0F0 / 10dp start margin) is inserted above the row to
+# match the other menu items' ButtonView.lineBottom separators. The row text is
+# 14sp (matching ButtonView.content) with a left settings-gear compound drawable
+# (framework android.R.drawable.ic_menu_manage, tinted black); no app resource is
+# added because patch_apk only replaces dex and leaves resources.arsc untouched.
 # Idempotent via a view tag. Emits Log.i("domico-patch", ...) for diagnostics.
 
 
@@ -23,7 +28,7 @@
 .end method
 
 .method public static install(Lvn/com/bravesoft/androidapp/databinding/MenuLayoutBinding;)V
-    .locals 8
+    .locals 10
 
     const-string v7, "domico-patch"
 
@@ -143,9 +148,64 @@
 
     const/4 v4, 0x2
 
-    const/high16 v6, 0x41800000    # 16.0f sp
+    const/high16 v6, 0x41600000    # 14.0f sp
 
     invoke-virtual {v5, v4, v6}, Landroid/widget/TextView;->setTextSize(IF)V
+
+    # domico-patch: 左端に設定アイコンを付与。アプリ内に歯車 drawable が無く、
+    # リソース追加は arsc 非改変方針(patch_apk は dex のみ差替)に反するため、
+    # 端末フレームワークの android.R.drawable.ic_menu_manage を参照する。
+    invoke-virtual {v5}, Landroid/view/View;->getContext()Landroid/content/Context;
+
+    move-result-object v8
+
+    sget v9, Landroid/R$drawable;->ic_menu_manage:I
+
+    invoke-virtual {v8, v9}, Landroid/content/Context;->getDrawable(I)Landroid/graphics/drawable/Drawable;
+
+    move-result-object v8
+
+    if-eqz v8, :domico_gear_skip
+
+    invoke-virtual {v5}, Landroid/widget/TextView;->getResources()Landroid/content/res/Resources;
+
+    move-result-object v9
+
+    invoke-virtual {v9}, Landroid/content/res/Resources;->getDisplayMetrics()Landroid/util/DisplayMetrics;
+
+    move-result-object v9
+
+    iget v9, v9, Landroid/util/DisplayMetrics;->density:F
+
+    # アイコンを 20dp 四方に収め、テキストと同じ黒(0xFF000000)でティント
+    const/high16 v0, 0x41a00000    # 20.0f
+
+    mul-float/2addr v0, v9
+
+    float-to-int v0, v0
+
+    const/4 v6, 0x0
+
+    invoke-virtual {v8, v6, v6, v0, v0}, Landroid/graphics/drawable/Drawable;->setBounds(IIII)V
+
+    const v0, -0x1000000    # 0xFF000000
+
+    invoke-virtual {v8, v0}, Landroid/graphics/drawable/Drawable;->setTint(I)V
+
+    const/4 v6, 0x0
+
+    invoke-virtual {v5, v8, v6, v6, v6}, Landroid/widget/TextView;->setCompoundDrawables(Landroid/graphics/drawable/Drawable;Landroid/graphics/drawable/Drawable;Landroid/graphics/drawable/Drawable;Landroid/graphics/drawable/Drawable;)V
+
+    # アイコンとテキストの間隔 8dp
+    const/high16 v0, 0x41000000    # 8.0f
+
+    mul-float/2addr v0, v9
+
+    float-to-int v0, v0
+
+    invoke-virtual {v5, v0}, Landroid/widget/TextView;->setCompoundDrawablePadding(I)V
+
+    :domico_gear_skip
 
     # layout params: 横 match_parent / 縦 wrap_content
     new-instance v4, Landroid/widget/LinearLayout$LayoutParams;
@@ -157,6 +217,65 @@
     invoke-direct {v4, v6, v1}, Landroid/widget/LinearLayout$LayoutParams;-><init>(II)V
 
     invoke-virtual {v5, v4}, Landroid/view/View;->setLayoutParams(Landroid/view/ViewGroup$LayoutParams;)V
+
+    # domico-patch: 他のメニュー行(ButtonView.lineBottom)と同じ区切り線を
+    # パッチ設定行の上に追加する。versionContain は最終行として下線を隠している
+    # ため、線が無いとバージョン行と地続きに見える。1dp / #F0F0F0 / 左マージン10dp
+    # で他行の下線に合わせる。冪等ガード(findViewWithTag)が線の二重追加も防ぐ。
+    new-instance v1, Landroid/view/View;
+
+    invoke-virtual {v2}, Landroid/view/View;->getContext()Landroid/content/Context;
+
+    move-result-object v8
+
+    invoke-direct {v1, v8}, Landroid/view/View;-><init>(Landroid/content/Context;)V
+
+    const v9, -0xf0f10    # 0xFFF0F0F0 (@color/whiteF0)
+
+    invoke-virtual {v1, v9}, Landroid/view/View;->setBackgroundColor(I)V
+
+    # density スケール(1dp / 10dp)を算出
+    invoke-virtual {v8}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
+
+    move-result-object v8
+
+    invoke-virtual {v8}, Landroid/content/res/Resources;->getDisplayMetrics()Landroid/util/DisplayMetrics;
+
+    move-result-object v8
+
+    iget v8, v8, Landroid/util/DisplayMetrics;->density:F
+
+    # 高さ = max(1, round(1dp * density)) で 0px つぶれを回避
+    const/high16 v9, 0x3f800000    # 1.0f
+
+    mul-float/2addr v9, v8
+
+    float-to-int v9, v9
+
+    const/4 v6, 0x1
+
+    invoke-static {v9, v6}, Ljava/lang/Math;->max(II)I
+
+    move-result v9
+
+    new-instance v6, Landroid/widget/LinearLayout$LayoutParams;
+
+    const/4 v3, -0x1
+
+    invoke-direct {v6, v3, v9}, Landroid/widget/LinearLayout$LayoutParams;-><init>(II)V
+
+    # 左マージン 10dp で他行 lineBottom の layout_marginStart に合わせる
+    const/high16 v9, 0x41200000    # 10.0f
+
+    mul-float/2addr v9, v8
+
+    float-to-int v9, v9
+
+    iput v9, v6, Landroid/view/ViewGroup$MarginLayoutParams;->leftMargin:I
+
+    invoke-virtual {v1, v6}, Landroid/view/View;->setLayoutParams(Landroid/view/ViewGroup$LayoutParams;)V
+
+    invoke-virtual {v2, v1}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
 
     invoke-virtual {v2, v5}, Landroid/view/ViewGroup;->addView(Landroid/view/View;)V
 
