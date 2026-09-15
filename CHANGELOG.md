@@ -2,7 +2,13 @@
 
 このパッチ(domico-patch)自身のリリースノート。Conventional Commits から自動生成。
 ベースアプリ追従ビルド(`v{versionName}-patch`)とは別軸のバージョンです。
-## [0.5.2] - 2026-07-16
+## [0.5.3] - 2026-09-15
+
+### Bug Fixes
+
+- Setup-android の既定 'tools' パッケージ取得で全ワークフローが落ちるのを修正
+
+## [0.6.0-dev] - 2026-07-16
 
 ### Bug Fixes
 
@@ -42,6 +48,7 @@
 
 ### CI
 
+- パッチ版 bump 時に公式版へパッチ適用した APK を patch-v に添付
 - Release.yml に手動タグ指定のAPKバックフィル経路を追加
 
 ### Documentation
@@ -66,7 +73,6 @@
 
 - Dev ブランチ動作確認用プレリリースワークフロー追加
 - Dev ブランチ動作確認用プレリリースワークフロー追加
-- パッチ版 bump 時に公式版へパッチ適用した APK を patch-v に添付
 
 ### Documentation
 
