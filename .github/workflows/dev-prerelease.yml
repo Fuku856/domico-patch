@@ -156,7 +156,7 @@ jobs:
           # dry-run は実ビルドと同じ build-tools を使う。別版の d8 で検査すると
           # 検査は通るのにビルドで落ちる(逆も)ズレが起きるため明示的に固定する。
           BT=$(ls -d $ANDROID_SDK_ROOT/build-tools/35.0.0)
-          if ! python3 scripts/patch_apk.py --in "$BASE" --check \n               --build-tools "$BT" 2>&1 | tee patch_check.log; then
+          if ! python3 scripts/patch_apk.py --in "$BASE" --check --build-tools "$BT" 2>&1 | tee patch_check.log; then
             echo "::error::パッチ対象コードが変化しました(${{ steps.check.outputs.vn }})。patch_check.log を確認してください。"
             exit 1
           fi
