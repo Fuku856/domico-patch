@@ -204,7 +204,10 @@ jobs:
             if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
           done
           if [ -z "$BASE" ]; then echo "::error::probe base apk (with dex) not found for dry-run"; exit 1; fi
-          if ! python3 scripts/patch_apk.py --in "$BASE" --check 2>&1 | tee patch_check.log; then
+          # dry-run は実ビルドと同じ build-tools を使う。別版の d8 で検査すると
+          # 検査は通るのにビルドで落ちる(逆も)ズレが起きるため明示的に固定する。
+          BT=$(ls -d $ANDROID_SDK_ROOT/build-tools/35.0.0)
+          if ! python3 scripts/patch_apk.py --in "$BASE" --check \n               --build-tools "$BT" 2>&1 | tee patch_check.log; then
             echo "::error::パッチ対象コードが現行公式版(${{ steps.probe.outputs.vn }})に適用できません。" \
                  "patch_check.log の FAIL 行を確認し smali を修正してください。APK は添付しません。"
             exit 1
