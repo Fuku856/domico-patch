@@ -190,9 +190,12 @@ def main():
     # (apktool 全体リビルドは一部端末で Invalid apk になるため不使用)
     base_unsigned = os.path.join(args.out, "base.unsigned.apk")
     log(f"patch-version={patch_version}")
+    # build-tools は既に解決済みなので patch_apk 経由で build_module.py へ渡す
+    # (パッチ本体の Java を d8 で dex 化するのに d8 が要る)。
     run([sys.executable, os.path.join(ROOT, "scripts", "patch_apk.py"),
          "--in", base_apk, "--out", base_unsigned,
-         "--patch-version", patch_version])
+         "--patch-version", patch_version,
+         "--build-tools", bt])
 
     # 署名対象: patch済 base + 元 config 群（全て同一鍵）
     signed_paths = []

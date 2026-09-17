@@ -32,6 +32,10 @@ on:
         description: "bump 無しでも強制ビルド（feat/fix なしで実行したい場合に ON）"
         type: boolean
         default: false
+      publish:
+        description: "プレリリースを公開する（OFF なら Release/タグを作らず APK を artifact として出すだけ）"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -82,9 +86,9 @@ jobs:
         if: env.SKIP != 'true'
         uses: android-actions/setup-android@v3
 
-      - name: Install build-tools 35.0.0
+      - name: Install build-tools 35.0.0 + platform 35 (d8 / android.jar)
         if: env.SKIP != 'true'
-        run: sdkmanager "build-tools;35.0.0" "platform-tools"
+        run: sdkmanager "build-tools;35.0.0" "platform-tools" "platforms;android-35"
 
       - name: Cache smali/baksmali
         if: env.SKIP != 'true'
@@ -199,12 +203,30 @@ jobs:
             --app-version "${{ steps.check.outputs.vn }}" \
             --channel dev
 
-      - name: Publish Pre-release
+      - name: Name output bundle
         if: env.SKIP != 'true'
+        id: bundle
+        run: |
+          FNAME="domico-patch-v${{ steps.pver.outputs.version }}-dev-base${{ steps.check.outputs.vn }}.apks"
+          mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apks "work/out/$FNAME"
+          echo "fname=$FNAME" >> "$GITHUB_OUTPUT"
+          ls -la work/out/
+
+      # publish=false のときは Release もタグも作らず、APK を artifact として出すだけ。
+      # dev を汚さずにビルドの通し確認をしたい場合に使う。
+      - name: Upload patched APKs (artifact only)
+        if: env.SKIP != 'true' && !inputs.publish
+        uses: actions/upload-artifact@v4
+        with:
+          name: domico-patch-dev-apks
+          path: work/out/${{ steps.bundle.outputs.fname }}
+          retention-days: 7
+
+      - name: Publish Pre-release
+        if: env.SKIP != 'true' && inputs.publish
         run: |
           TAG="patch-v${{ steps.pver.outputs.version }}-dev"
-          FNAME="domico-patch-v${{ steps.pver.outputs.version }}-dev-base${{ steps.check.outputs.vn }}.apks"
-          mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apks work/out/$FNAME
+          FNAME="${{ steps.bundle.outputs.fname }}"
           # dev プレリリースは版を刻む(0.3.1, 0.3.2, ...)たびに別タグとして残す。
           # 削除するのは今回と同じ版のみ(コミットせず再実行して APK だけ差し替える場合の
           # 作り直し)。過去版の patch-v*-dev リリースはそのまま履歴として保持する。

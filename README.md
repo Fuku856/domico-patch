@@ -46,16 +46,22 @@ OK で公式の `CheckInDialog` を開く（和食/洋食の正しい表示と�
 - パッチバージョン仕様: [docs/patch-versioning.md](docs/patch-versioning.md)
 
 ## パッチ方式の要点
-- パッチは **`classes4.dex` のみ差し替え**（resources/manifest は公式とバイト一致）。
+- パッチ本体は **Java で書かれた独立モジュール**（`module/src`）で、`classes5.dex` として
+  APK に**追加**される。公式 dex 側に入るのはパッチを呼ぶだけの短い trampoline のみ。
+- 公式側の変更は **`classes4.dex` の差し替えだけ**（resources/manifest は公式とバイト一致）。
   apktool 全体リビルドは Xiaomi/HyperOS 等が `INSTALL_FAILED_USER_RESTRICTED` で弾くため不使用。
 - 日本語は `config.ja` **スプリット**または**apkeep**による取得が必要（base には無し）。ローカルは端末 pull、CI は apkeepでGoogle Play(ja) から取得。
 
 ## 構成
 ```
+module/
+  src/              # パッチ本体（Java）。javac→d8 で独立した classes5.dex になる
+  stubs/            # コンパイル専用スタブ（dex には入らない／実行時は公式クラスを解決）
 scripts/
+  build_module.py   # module/ を単一 dex にビルド（版文字列も埋め込む）
   patch_smali.py    # 全パッチの smali 適用（冪等・アンカー基準・版ズレで失敗）
-  patch_assets/     # 追加する patch/*.smali（PatchPrefs/設定画面/インターセプタ等）
-  patch_apk.py      # classes4.dex のみ baksmali→patch→smali で差し替え（リソース据置）
+  patch_assets/     # 未移行の patch/*.smali（順次 module/src へ移行中）
+  patch_apk.py      # classes4.dex を差し替え＋パッチ dex を追加（リソース据置）
   build.py          # 入力(xapk/フォルダ)→dexパッチ→zipalign→全split署名→個別apk出力
   pull-splits.{ps1,sh}   # 端末の公式版から全スプリット(config.ja含む)を吸い出す
   setup-signing.{ps1,sh} # 署名鍵作成 + GitHub Secrets 登録（ワンショット）
