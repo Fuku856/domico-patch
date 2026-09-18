@@ -8,7 +8,12 @@ classes5 のクラスを参照する形になる。この参照は smali のア�
 検査されず、**実行時に初めて** 解決される。つまりフィールド名を1文字
 変えただけでも、ビルドは通るのに実機で NoSuchFieldError になる。
 
-このスクリプトは smali ツリー中の
+逆向き (classes5 の Java から未移行の smali クラスを呼ぶ) も同じ危うさがある。
+こちらは module/stubs の手書きスタブ越しにコンパイルするため、スタブと smali の
+実体がずれても javac も d8 も成功してしまう。しかも呼び出し元の PatchInit は
+Throwable を握り潰すので、失敗しても無言で機能が止まる。
+
+このスクリプトは classes4 の smali ツリーとモジュール dex の両方から
   Lvn/com/bravesoft/androidapp/patch/X;->member
 という参照を全て集め、smali 側の定義とモジュール dex 側の定義を合わせた
 集合で解決できるかを確認する。解決できないものがあれば非0で終了する。
@@ -158,9 +163,22 @@ def main():
     for cls in tree_defs:
         where[cls] = "smali (classes4)" if cls not in module_defs else "両方(重複!)"
 
-    refs = collect_references(tree_files)
+    # 参照は両方向とも集める:
+    #   classes4 の smali -> classes5 の Java (trampoline / 未移行クラスからの呼び出し)
+    #   classes5 の Java  -> classes4 の smali (未移行クラスを呼ぶ。module/stubs の
+    #                       スタブ越しにコンパイルするので、ここがずれても javac も
+    #                       d8 も気付けない)
+    module_set = {os.path.abspath(f) for f in module_files}
+    refs = collect_references(tree_files + module_files)
 
-    log(f"smali ファイル: {len(tree_files)} / モジュール dex のクラス: {len(module_defs)}")
+    def where_from(path):
+        prefix = "module dex" if os.path.abspath(path) in module_set else "classes4"
+        return f"{prefix}:{os.path.basename(path)}"
+
+    log(
+        f"smali ファイル: classes4 {len(tree_files)} + モジュール dex {len(module_files)}"
+        f" / モジュール dex のクラス: {len(module_defs)}"
+    )
     log(f"パッチクラスへの参照: {len(refs)} 件")
 
     missing = []
@@ -189,7 +207,7 @@ def main():
     if missing:
         print("", file=sys.stderr)
         for cls, member, sources, why in missing:
-            src = ", ".join(sorted(os.path.basename(s) for s in sources))
+            src = ", ".join(sorted(where_from(s) for s in sources))
             print(f"FAIL {why}: L{cls};->{member}  (参照元: {src})", file=sys.stderr)
         raise SystemExit(f"未解決のパッチ参照が {len(missing)} 件あります")
 
