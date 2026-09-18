@@ -219,6 +219,16 @@ def main():
     )
     log(f"module dex = {module_dex_name} ({len(module_bytes):,} bytes)")
 
+    # classes4 の smali から classes5 のパッチクラスへの参照は、アセンブル時には
+    # 検査されず実行時に初めて解決される。ここで静的に突き合わせておかないと、
+    # フィールド名の変更などがビルドを素通りして実機で NoSuchFieldError になる。
+    run([
+        sys.executable,
+        os.path.join(ROOT, "scripts", "verify_patch_refs.py"),
+        "--smali-dir", work,
+        "--module-dex", os.path.join(work, module_dex_name),
+    ])
+
     if args.check:
         log(
             "patch dry-run OK: アセンブル・モジュールビルドとも成功 "

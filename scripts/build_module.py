@@ -179,6 +179,32 @@ def class_files(d):
     return sorted(glob.glob(os.path.join(d, "**", "*.class"), recursive=True))
 
 
+def check_no_stub_shadowing(src_srcs, stub_srcs):
+    """同じ FQCN が src と stubs の両方にある状態を弾く。
+
+    未移行のパッチクラスは classes4 の smali が実体で、module/stubs に
+    コンパイル用スタブを置く。移行してスタブを消し忘れると、dex には本物が
+    入るのに javac はスタブを見る、という気付きにくいズレになるため、
+    ビルド時に落とす。
+    """
+    def fqcn(paths, root):
+        out = {}
+        for p in paths:
+            rel = os.path.relpath(p, root)
+            out[os.path.splitext(rel)[0].replace(os.sep, ".")] = p
+        return out
+
+    src_map = fqcn(src_srcs, SRC_DIR)
+    stub_map = fqcn(stub_srcs, STUB_DIR)
+    dupes = sorted(set(src_map) & set(stub_map))
+    if dupes:
+        lines = "\n".join(f"  {d}\n    src  : {src_map[d]}\n    stub : {stub_map[d]}" for d in dupes)
+        raise SystemExit(
+            "同じクラスが module/src と module/stubs の両方にあります。\n"
+            "移行が済んだらスタブを削除してください:\n" + lines
+        )
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -215,6 +241,7 @@ def main():
 
     # 1) スタブをコンパイル (dex には入れない。classpath 専用)
     stub_srcs = java_sources(STUB_DIR)
+    check_no_stub_shadowing(java_sources(SRC_DIR), stub_srcs)
     cp = [android_jar]
     if stub_srcs:
         run([
