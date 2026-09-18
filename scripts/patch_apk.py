@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
-外科的 dex パッチ: 元の base.apk を「ほぼバイト維持」のまま、AlertUtils を含む
-単一の classesN.dex だけを baksmali->patch->smali で差し替える。
+外科的 dex パッチ: 元の base.apk を「ほぼバイト維持」のまま、
+
+  1. パッチ対象クラスを含む classesN.dex だけを baksmali->patch->smali で差し替え、
+  2. パッチ本体を載せた新しい classesN.dex を **追加** する。
+
+パッチ本体(module/src の Java)は公式 dex には混ぜない。公式 dex 側に入るのは
+パッチクラスを呼び出すだけの短い trampoline であり、公式コードの改変量を最小に
+保つ。ART は classes.dex から連番で dex を読むため、追加 dex は manifest を
+触らずに読み込まれる。
 
 apktool の全体リビルド(resources.arsc / AndroidManifest の再エンコード)は
 一部端末(例: Xiaomi/HyperOS)で INSTALL_FAILED_USER_RESTRICTED: Invalid apk を
@@ -12,7 +19,7 @@ apktool の全体リビルド(resources.arsc / AndroidManifest の再エンコ�
 使い方:
   python scripts/patch_apk.py --in <orig_base.apk> --out <patched_base.apk> \
       [--baksmali tools/baksmali.jar] [--smali tools/smali.jar] [--work work/dexpatch] \
-      [--api 26]
+      [--api 26] [--patch-version <str>] [--build-tools <dir>] [--android-jar <path>]
 """
 import argparse
 import os
@@ -62,6 +69,45 @@ def find_target_dex(apk):
     return None, dexes
 
 
+def next_dex_name(dexes):
+    """パッチモジュールを載せる新しい classesN.dex の名前を返す。
+
+    ART は classes.dex, classes2.dex ... を **連番で** 読み、欠番が出た時点で
+    打ち切る。したがって追加先は「最大 + 1」でなければならない(空き番号では
+    ないことに注意)。公式が将来 classes5.dex を持ち込んでも衝突しないよう、
+    番号はハードコードせずここで決める。
+    """
+    idx = []
+    for n in dexes:
+        m = re.fullmatch(r"classes(\d*)\.dex", n)
+        idx.append(int(m.group(1)) if m.group(1) else 1)
+    idx.sort()
+    if idx != list(range(1, len(idx) + 1)):
+        raise SystemExit(
+            f"dex の連番が期待と異なります: {dexes}。"
+            "ART は欠番で読み込みを打ち切るため、追加先を決定できません。"
+        )
+    return f"classes{len(idx) + 1}.dex"
+
+
+def build_module_dex(out_path, patch_version, build_tools, android_jar, work):
+    """パッチ本体(module/src の Java)を単一 dex にビルドする。"""
+    cmd = [
+        sys.executable,
+        os.path.join(ROOT, "scripts", "build_module.py"),
+        "--out", out_path,
+        "--work", work,
+    ]
+    if patch_version:
+        cmd += ["--patch-version", patch_version]
+    if build_tools:
+        cmd += ["--build-tools", build_tools]
+    if android_jar:
+        cmd += ["--android-jar", android_jar]
+    run(cmd)
+    return open(out_path, "rb").read()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", required=True)
@@ -80,14 +126,22 @@ def main():
         "--patch-version",
         help="設定画面フッターに埋め込むパッチバージョン文字列。",
     )
+    ap.add_argument(
+        "--build-tools",
+        help="d8 を含む Android build-tools ディレクトリ(build_module.py へ委譲)。",
+    )
+    ap.add_argument(
+        "--android-jar",
+        help="コンパイルに使う android.jar のパス(build_module.py へ委譲)。",
+    )
     args = ap.parse_args()
     if not args.check and not args.out:
         ap.error("--out is required unless --check")
 
     java = find_java()
-    # --check は baksmali での復号までしか使わないため smali.jar は不要
-    needed_jars = (args.baksmali,) if args.check else (args.baksmali, args.smali)
-    for jar in needed_jars:
+    # --check もアセンブルまで行い、参照数上限や api レベルの不整合を
+    # 実ビルド前に検出する。よって smali.jar は常に必要。
+    for jar in (args.baksmali, args.smali):
         if not os.path.isfile(jar):
             raise SystemExit(f"not found: {jar} (run setup; tools/baksmali.jar, tools/smali.jar)")
 
@@ -119,22 +173,20 @@ def main():
             run([java, "-jar", args.baksmali, "d", tmp, "-o", sdir])
 
     if args.check:
+        # 1段目: アンカー検査。公式更新でパッチ対象コードが変化していれば
+        # ここで FAIL 行付きで落ちる(どのパッチが壊れたかが分かる)。
         p = subprocess.run([sys.executable, patch_smali, "--check", work])
         if p.returncode != 0:
             raise SystemExit(
                 "patch dry-run FAILED: パッチ対象コードが変化しています。"
                 "上記の FAIL 行で該当クラスを確認し、smali を手動修正してください。"
             )
-        log("patch dry-run OK: 現行パッチは適用可能です(コード変化なし)")
-        return
+        log("patch dry-run: アンカー検査 OK。続けて実アセンブルを検証します")
 
     # 既存の patch_smali.py を流用(冪等・アンカー基準)。
     # 実際に変更した shard 名を changed_out に書き出させ、再アセンブル対象を絞る。
     changed_out = os.path.join(work, ".changed_shards")
-    patch_cmd = [sys.executable, patch_smali, work, "--changed-out", changed_out]
-    if args.patch_version:
-        patch_cmd[2:2] = ["--patch-version", args.patch_version]
-    run(patch_cmd)
+    run([sys.executable, patch_smali, work, "--changed-out", changed_out])
 
     # patch_smali が実際に書き換えた shard だけを再アセンブルする。未変更 dex は
     # 元バイトのまま維持: baksmali->smali の往復はバイト同一を保証せず、無関係な
@@ -156,9 +208,39 @@ def main():
         run([java, "-jar", args.smali, "a", "-a", args.api, "-o", dex_out, sdir])
         new_dex_bytes_map[dex_name] = open(dex_out, "rb").read()
 
-    # 元 APK をコピーし、変更 dex だけ差し替え(他エントリは圧縮種別を維持)
+    # パッチ本体は公式 dex に混ぜず、独立した dex として **追加** する。
+    module_dex_name = next_dex_name(dexes)
+    module_bytes = build_module_dex(
+        os.path.join(work, module_dex_name),
+        args.patch_version,
+        args.build_tools,
+        args.android_jar,
+        os.path.join(work, "module"),
+    )
+    log(f"module dex = {module_dex_name} ({len(module_bytes):,} bytes)")
+
+    # classes4 の smali から classes5 のパッチクラスへの参照は、アセンブル時には
+    # 検査されず実行時に初めて解決される。ここで静的に突き合わせておかないと、
+    # フィールド名の変更などがビルドを素通りして実機で NoSuchFieldError になる。
+    run([
+        sys.executable,
+        os.path.join(ROOT, "scripts", "verify_patch_refs.py"),
+        "--smali-dir", work,
+        "--module-dex", os.path.join(work, module_dex_name),
+    ])
+
+    if args.check:
+        log(
+            "patch dry-run OK: アセンブル・モジュールビルドとも成功 "
+            f"(再アセンブル {sorted(new_dex_bytes_map) or '(none)'}, 追加 {module_dex_name})"
+        )
+        return
+
+    # 元 APK をコピーし、変更 dex だけ差し替え(他エントリは圧縮種別を維持)。
+    # パッチ dex は最後の classesN.dex の直後に、公式 dex と同じ格納方式で挿む。
     if os.path.exists(args.out):
         os.remove(args.out)
+    last_dex = dexes[-1]
     with zipfile.ZipFile(args.inp) as zin, zipfile.ZipFile(args.out, "w") as zout:
         for item in zin.infolist():
             if item.filename in new_dex_bytes_map:
@@ -171,8 +253,16 @@ def main():
             zi.internal_attr = item.internal_attr
             zi.create_system = item.create_system
             zout.writestr(zi, data)
+            if item.filename == last_dex:
+                mi = zipfile.ZipInfo(module_dex_name, date_time=item.date_time)
+                mi.compress_type = item.compress_type
+                mi.external_attr = item.external_attr
+                mi.internal_attr = item.internal_attr
+                mi.create_system = item.create_system
+                zout.writestr(mi, module_bytes)
     log(f"wrote {args.out} (replaced {len(new_dex_bytes_map)} dex(es): "
-        f"{sorted(new_dex_bytes_map) or '(none)'}; others byte-preserved by type)")
+        f"{sorted(new_dex_bytes_map) or '(none)'}; added {module_dex_name}; "
+        "others byte-preserved by type)")
 
 if __name__ == "__main__":
     main()

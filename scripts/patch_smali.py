@@ -3,7 +3,9 @@
 Domico 非公式パッチ群の smali 適用スクリプト。
 
 適用する内容:
-  1. 共通基盤クラス(scripts/patch_assets 配下の patch/*.smali)を classes4 へ配置。
+  1. 未移行の共通基盤クラス(scripts/patch_assets 配下の patch/*.smali)を
+     classes4 へ配置。Java へ移行済みのクラスは module/src 側にあり、
+     build_module.py が別 dex にまとめるのでここには現れない。
   2. ログイントースト クリックスルー(AlertUtils): 通知ダイアログを
      PatchPrefs.toastEnabled のときだけクリックスルー化(既存パッチをフラグ化)。
   3. テレメトリ停止 + Activity トラッカ + prefs ロード(MyApplication.onCreate)。
@@ -24,7 +26,7 @@ Domico 非公式パッチ群の smali 適用スクリプト。
   - アンカーが見つからなければ非0で終了し、CI で版変更を検知できるようにする。
 
 使い方:
-  python scripts/patch_smali.py [--check] [--patch-version <str>] <decoded_base_dir>
+  python scripts/patch_smali.py [--check] <decoded_base_dir>
     例) python scripts/patch_smali.py work/base
 """
 
@@ -127,7 +129,7 @@ def method_bounds(lines, sig_prefix):
 
 # ---- patch 1: assets -------------------------------------------------------
 
-def patch_assets(base_dir, check_only, patch_version):
+def patch_assets(base_dir, check_only):
     if not os.path.isdir(ASSET_DIR):
         return False, False, f"asset dir missing: {ASSET_DIR}"
     # AlertUtils と同じ dex シャードにヘルパーを配置する。
@@ -153,15 +155,6 @@ def patch_assets(base_dir, check_only, patch_version):
             dst = os.path.join(smali_root, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(src, dst)
-            if patch_version and f == "PatchInfo.smali":
-                pl = read_lines(dst)
-                for k, ln in enumerate(pl):
-                    if "VERSION:Ljava/lang/String; =" in ln:
-                        pl[k] = (
-                            "    .field public static final VERSION:Ljava/lang/String; = "
-                            f"{smali_string(patch_version)}\n"
-                        )
-                write_lines(dst, pl)
             count += 1
     return True, True, f"placed {count} helper class(es) into {os.path.basename(smali_root)}"
 
@@ -704,17 +697,12 @@ def main():
         help="dry-run: パッチ可否のみ判定、ファイルを書かない",
     )
     ap.add_argument(
-        "--patch-version",
-        help="PatchInfo.VERSION に埋め込むバージョン文字列",
-    )
-    ap.add_argument(
         "--changed-out",
         help="実際に変更した shard 名(改行区切り)を書き出すファイル。"
         "patch_apk が再アセンブル対象 dex を絞るために使う。",
     )
     args = ap.parse_args()
     check_only = args.check
-    patch_version = args.patch_version
     base_dir = args.base_dir
     mode = "CHECK" if check_only else "PATCH"
     if not os.path.isdir(base_dir):
@@ -724,10 +712,7 @@ def main():
     changed_shards = set()
     for name, fn, rel in PATCHES:
         try:
-            if name == "assets":
-                ok, changed, msg = fn(base_dir, check_only, patch_version)
-            else:
-                ok, changed, msg = fn(base_dir, check_only)
+            ok, changed, msg = fn(base_dir, check_only)
         except Exception as e:  # noqa: BLE001
             ok, changed, msg = False, False, f"exception: {e}"
         tag = "OK " if ok else "FAIL"

@@ -32,6 +32,10 @@ on:
         description: "bump 無しでも強制ビルド（feat/fix なしで実行したい場合に ON）"
         type: boolean
         default: false
+      publish:
+        description: "プレリリースを公開する（OFF なら Release/タグを作らず APK を artifact として出すだけ）"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -81,10 +85,14 @@ jobs:
       - name: Set up Android SDK (build-tools)
         if: env.SKIP != 'true'
         uses: android-actions/setup-android@v3
+        with:
+          # 既定の 'tools' パッケージは SDK リポジトリから削除済みで
+          # インストールに失敗する。必要な物は次のステップで明示導入する。
+          packages: ''
 
-      - name: Install build-tools 35.0.0
+      - name: Install build-tools 35.0.0 + platform 35 (d8 / android.jar)
         if: env.SKIP != 'true'
-        run: sdkmanager "build-tools;35.0.0" "platform-tools"
+        run: sdkmanager "build-tools;35.0.0" "platform-tools" "platforms;android-35"
 
       - name: Cache smali/baksmali
         if: env.SKIP != 'true'
@@ -145,7 +153,10 @@ jobs:
             if unzip -l "$f" | grep -qE 'classes[0-9]*\.dex'; then BASE="$f"; break; fi
           done
           if [ -z "$BASE" ]; then echo "::error::probe base apk (with dex) not found for dry-run"; exit 1; fi
-          if ! python3 scripts/patch_apk.py --in "$BASE" --check 2>&1 | tee patch_check.log; then
+          # dry-run は実ビルドと同じ build-tools を使う。別版の d8 で検査すると
+          # 検査は通るのにビルドで落ちる(逆も)ズレが起きるため明示的に固定する。
+          BT=$(ls -d $ANDROID_SDK_ROOT/build-tools/35.0.0)
+          if ! python3 scripts/patch_apk.py --in "$BASE" --check --build-tools "$BT" 2>&1 | tee patch_check.log; then
             echo "::error::パッチ対象コードが変化しました(${{ steps.check.outputs.vn }})。patch_check.log を確認してください。"
             exit 1
           fi
@@ -199,12 +210,30 @@ jobs:
             --app-version "${{ steps.check.outputs.vn }}" \
             --channel dev
 
-      - name: Publish Pre-release
+      - name: Name output bundle
         if: env.SKIP != 'true'
+        id: bundle
+        run: |
+          FNAME="domico-patch-v${{ steps.pver.outputs.version }}-dev-base${{ steps.check.outputs.vn }}.apks"
+          mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apks "work/out/$FNAME"
+          echo "fname=$FNAME" >> "$GITHUB_OUTPUT"
+          ls -la work/out/
+
+      # publish=false のときは Release もタグも作らず、APK を artifact として出すだけ。
+      # dev を汚さずにビルドの通し確認をしたい場合に使う。
+      - name: Upload patched APKs (artifact only)
+        if: env.SKIP != 'true' && !inputs.publish
+        uses: actions/upload-artifact@v4
+        with:
+          name: domico-patch-dev-apks
+          path: work/out/${{ steps.bundle.outputs.fname }}
+          retention-days: 7
+
+      - name: Publish Pre-release
+        if: env.SKIP != 'true' && inputs.publish
         run: |
           TAG="patch-v${{ steps.pver.outputs.version }}-dev"
-          FNAME="domico-patch-v${{ steps.pver.outputs.version }}-dev-base${{ steps.check.outputs.vn }}.apks"
-          mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apks work/out/$FNAME
+          FNAME="${{ steps.bundle.outputs.fname }}"
           # dev プレリリースは版を刻む(0.3.1, 0.3.2, ...)たびに別タグとして残す。
           # 削除するのは今回と同じ版のみ(コミットせず再実行して APK だけ差し替える場合の
           # 作り直し)。過去版の patch-v*-dev リリースはそのまま履歴として保持する。
