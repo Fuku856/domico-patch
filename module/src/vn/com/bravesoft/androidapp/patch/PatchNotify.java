@@ -63,8 +63,14 @@ public final class PatchNotify implements Runnable {
     private static final String TEXT_UNCONFIRMED =
             "送信しましたが完了を確認できませんでした。アプリで状態をご確認ください。";
 
-    /** 小アイコンに使う drawable 名の候補。リソースは追加できないので実行時に解決する。 */
-    private static final String[] ICON_NAMES = {"ic_notification", "icon_notice"};
+    /**
+     * 小アイコンに使う drawable 名の候補。リソースを追加できないので実行時に解決する。
+     *
+     * <p>{@code ic_push_notification} は公式が FCM 通知の小アイコンに使っている白抜き PNG
+     * (MyFirebaseMessagingService の {@code 0x7f080193})。ただし実体は密度スプリット側に
+     * あるので、スプリット構成によっては解決できず {@code applicationInfo.icon} に落ちる。
+     */
+    private static final String[] ICON_NAMES = {"ic_push_notification", "ic_notification"};
 
     static volatile Context appContext;
     static volatile Handler handler;
