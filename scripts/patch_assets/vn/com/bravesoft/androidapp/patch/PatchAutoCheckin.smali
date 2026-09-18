@@ -10,6 +10,11 @@
 # フラグメントが GC された / 機能が OFF になったときは自動停止する。
 # run()/checkAndFire() は毎回 checkinEnabled も再チェックする(親フラグを実行時に
 # OFF にした場合、保留中のジョブを即座に無効化するため)。
+#
+# 自動発火は CheckInDialog を開かないため画面にはなにも出ない。そこで発火時に
+# PatchNotify.onAutoCheckinFired() でシステム通知を出し、その後もポーリングを続けて
+# (startConfirmPolling)、checkAndFire 冒頭の PatchNotify.onMenuUpdate() が
+# 「チェックイン済み」への変化を検知したら同じ通知を結果表示へ差し替える。
 
 .implements Ljava/lang/Runnable;
 
@@ -121,6 +126,39 @@
 
 .end method
 
+# 自動送信の直後に呼ばれ、結果確認のためポーリングを再開する。
+# 直前の clearPending() が pendingFragment を null にしているので張り直す。
+.method static startConfirmPolling(Lvn/com/bravesoft/androidapp/ui/HomeFragment;)V
+    .locals 4
+
+    if-eqz p0, :ret
+
+    new-instance v0, Ljava/lang/ref/WeakReference;
+
+    invoke-direct {v0, p0}, Ljava/lang/ref/WeakReference;-><init>(Ljava/lang/Object;)V
+
+    sput-object v0, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->pendingFragment:Ljava/lang/ref/WeakReference;
+
+    sget-object v0, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->handler:Landroid/os/Handler;
+
+    sget-object v1, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->INSTANCE:Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;
+
+    invoke-virtual {v0, v1}, Landroid/os/Handler;->removeCallbacks(Ljava/lang/Runnable;)V
+
+    sget-object v0, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->handler:Landroid/os/Handler;
+
+    sget-object v1, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->INSTANCE:Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;
+
+    # 30 秒 = 30000ms = 0x7530
+    const-wide/32 v2, 0x7530
+
+    invoke-virtual {v0, v1, v2, v3}, Landroid/os/Handler;->postDelayed(Ljava/lang/Runnable;J)Z
+
+    :ret
+    return-void
+
+.end method
+
 
 # virtual methods
 
@@ -147,8 +185,16 @@
 
     const/4 v1, -0x1
 
-    if-eq v0, v1, :done
+    if-ne v0, v1, :have_pending
 
+    # 保留は無いが、自動送信後の結果確認待ちなら getMenuForDay のポーリングを続ける
+    invoke-static {}, Lvn/com/bravesoft/androidapp/patch/PatchNotify;->isAwaiting()Z
+
+    move-result v0
+
+    if-eqz v0, :done
+
+    :have_pending
     sget-object v1, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->pendingFragment:Ljava/lang/ref/WeakReference;
 
     if-eqz v1, :done
@@ -197,6 +243,46 @@
 
     if-eqz p1, :ret
 
+    # 結果確認: 自動送信した予約がチェックイン済みに変わったかを PatchNotify へ伝える。
+    # 途中でフラグが OFF になっても通知が決着するよう、早期 return より前に置く。
+    # 確認待ちでないときは DTO を触らずに抜ける(showUICheckIn は毎回通るため)。
+    invoke-static {}, Lvn/com/bravesoft/androidapp/patch/PatchNotify;->isAwaiting()Z
+
+    move-result v0
+
+    if-eqz v0, :no_update
+
+    invoke-virtual {p1}, Lvn/com/bravesoft/androidapp/model/MenuForDayDTO;->getReservationId()Ljava/lang/Integer;
+
+    move-result-object v0
+
+    if-eqz v0, :no_update
+
+    invoke-virtual {v0}, Ljava/lang/Integer;->intValue()I
+
+    move-result v0
+
+    # v1 = checkedIn。getCheckIn() が null / 0 なら未チェックイン。
+    const/4 v1, 0x0
+
+    invoke-virtual {p1}, Lvn/com/bravesoft/androidapp/model/MenuForDayDTO;->getCheckIn()Ljava/lang/Integer;
+
+    move-result-object v2
+
+    if-eqz v2, :update_call
+
+    invoke-virtual {v2}, Ljava/lang/Integer;->intValue()I
+
+    move-result v2
+
+    if-eqz v2, :update_call
+
+    const/4 v1, 0x1
+
+    :update_call
+    invoke-static {v0, v1}, Lvn/com/bravesoft/androidapp/patch/PatchNotify;->onMenuUpdate(IZ)V
+
+    :no_update
     sget-boolean v0, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->autoCheckinEnabled:Z
 
     if-eqz v0, :ret
@@ -262,6 +348,11 @@
     if-eqz v2, :ret
 
     invoke-virtual {v2, v1}, Lvn/com/bravesoft/androidapp/modelview/HomeModelView;->checkIn(I)V
+
+    # 送信した旨を通知し、結果を確認するためポーリングを再開する
+    invoke-static {v1}, Lvn/com/bravesoft/androidapp/patch/PatchNotify;->onAutoCheckinFired(I)V
+
+    invoke-static {p0}, Lvn/com/bravesoft/androidapp/patch/PatchAutoCheckin;->startConfirmPolling(Lvn/com/bravesoft/androidapp/ui/HomeFragment;)V
 
     goto :ret
 
