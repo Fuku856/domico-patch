@@ -17,8 +17,10 @@ import java.lang.ref.WeakReference;
  * 自動チェックインの結果をシステム通知で伝える。
  *
  * <p>自動発火経路は {@code CheckInDialog}/{@code CheckInCompletedDialog} を開かないため、
- * 送信したことも成功したことも画面には出ない。しかも発火はアプリがバックグラウンドに
- * いる間にも起こり得るので、Toast では届かない。そこで:
+ * 送信したことも成功したことも画面には出ない。発火自体はアプリが前面にいる間しか起きない
+ * (公式の LiveData 観測者が Fragment を LifecycleOwner にしているため) が、ユーザーが
+ * 別タブ・別画面にいることはあるし、Toast は数秒で消えて履歴も残らない。さらに成否が
+ * 分かるのは送信から数十秒後で、その頃にはアプリを離れていることも多い。そこで:
  *
  * <ol>
  *   <li>発火時に「送信しました」を通知し、確認待ちに入る。</li>
@@ -76,6 +78,17 @@ public final class PatchNotify implements Runnable {
     static volatile Handler handler;
     static volatile int awaitingReservationId = NO_RESERVATION;
 
+    /**
+     * タイムアウトで「確認できませんでした」と出した予約 ID。
+     *
+     * <p>公式の LiveData 観測者は Fragment 自身を LifecycleOwner にしているため
+     * (HomeFragment.setupObserveModelView)、アプリが背面にいる間は {@code showUICheckIn} が
+     * 呼ばれず {@link #onMenuUpdate} も届かない。送信直後に背面へ回されると成功していても
+     * 必ずタイムアウトしてしまうので、復帰後の更新でチェックイン済みと分かったら
+     * 通知を「完了しました」へ訂正する。
+     */
+    static volatile int unconfirmedReservationId = NO_RESERVATION;
+
     /** {@link PatchInit#onAppCreate} から呼ばれ、以後 Context を渡さずに通知できるようにする。 */
     public static void init(Context ctx) {
         if (ctx == null) {
@@ -92,16 +105,30 @@ public final class PatchNotify implements Runnable {
         return awaitingReservationId != NO_RESERVATION;
     }
 
+    /**
+     * {@link #onMenuUpdate} を呼ぶ価値があるか。確認待ちに加えて、タイムアウトで
+     * 打ち切った予約の訂正待ちも含む。ポーリング継続の判断 ({@link #isAwaiting()}) とは
+     * 別物: 訂正は次にホームが更新されたときに拾えればよく、そのためにポーリングは続けない。
+     */
+    public static boolean wantsMenuUpdate() {
+        return awaitingReservationId != NO_RESERVATION || unconfirmedReservationId != NO_RESERVATION;
+    }
+
     /** 自動チェックインを送信した直後に呼ばれる。通知を出して確認待ちに入る。 */
     public static void onAutoCheckinFired(int reservationId) {
         try {
             awaitingReservationId = reservationId;
-            post(TEXT_SENT);
+            unconfirmedReservationId = NO_RESERVATION;
+            // タイムアウトを先に仕込む。post() が投げても確認待ちが残り続けないように
+            // (残ると PatchAutoCheckin.run() が 30 秒ポーリングを延々と続けてしまう)。
             Handler h = handler();
             h.removeCallbacks(TIMEOUT);
             h.postDelayed(TIMEOUT, CONFIRM_TIMEOUT_MS);
+            post(TEXT_SENT);
         } catch (Throwable ignored) {
             // 通知は付随機能。失敗してもチェックイン本体には影響させない。
+            // ただし確認待ちだけは必ず畳む (ポーリングが止まらなくなるため)。
+            awaitingReservationId = NO_RESERVATION;
         }
     }
 
@@ -114,13 +141,20 @@ public final class PatchNotify implements Runnable {
             if (!checkedIn) {
                 return;
             }
-            int awaiting = awaitingReservationId;
-            if (awaiting == NO_RESERVATION || awaiting != reservationId) {
+            if (reservationId == NO_RESERVATION) {
                 return;
             }
-            awaitingReservationId = NO_RESERVATION;
-            handler().removeCallbacks(TIMEOUT);
-            post(TEXT_DONE);
+            if (awaitingReservationId == reservationId) {
+                awaitingReservationId = NO_RESERVATION;
+                handler().removeCallbacks(TIMEOUT);
+                post(TEXT_DONE);
+                return;
+            }
+            // 背面にいる間に確認できず打ち切った予約。復帰後に済みと分かったので訂正する。
+            if (unconfirmedReservationId == reservationId) {
+                unconfirmedReservationId = NO_RESERVATION;
+                post(TEXT_DONE);
+            }
         } catch (Throwable ignored) {
             // 同上。
         }
@@ -130,10 +164,12 @@ public final class PatchNotify implements Runnable {
     @Override
     public void run() {
         try {
-            if (awaitingReservationId == NO_RESERVATION) {
+            int awaiting = awaitingReservationId;
+            if (awaiting == NO_RESERVATION) {
                 return;
             }
             awaitingReservationId = NO_RESERVATION;
+            unconfirmedReservationId = awaiting;
             post(TEXT_UNCONFIRMED);
         } catch (Throwable ignored) {
             // 同上。

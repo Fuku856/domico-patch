@@ -11,7 +11,8 @@
 # run()/checkAndFire() は毎回 checkinEnabled も再チェックする(親フラグを実行時に
 # OFF にした場合、保留中のジョブを即座に無効化するため)。
 #
-# 自動発火は CheckInDialog を開かないため画面にはなにも出ない。そこで発火時に
+# 自動発火は CheckInDialog を開かないため画面にはなにも出ない(発火自体は公式の
+# LiveData 観測者の都合でアプリ前面時のみだが、別タブ・別画面のことはある)。そこで発火時に
 # PatchNotify.onAutoCheckinFired() でシステム通知を出し、その後もポーリングを続けて
 # (startConfirmPolling)、checkAndFire 冒頭の PatchNotify.onMenuUpdate() が
 # 「チェックイン済み」への変化を検知したら同じ通知を結果表示へ差し替える。
@@ -245,8 +246,9 @@
 
     # 結果確認: 自動送信した予約がチェックイン済みに変わったかを PatchNotify へ伝える。
     # 途中でフラグが OFF になっても通知が決着するよう、早期 return より前に置く。
-    # 確認待ちでないときは DTO を触らずに抜ける(showUICheckIn は毎回通るため)。
-    invoke-static {}, Lvn/com/bravesoft/androidapp/patch/PatchNotify;->isAwaiting()Z
+    # 用が無いときは DTO を触らずに抜ける(showUICheckIn は毎回通るため)。
+    # run() のポーリング継続判断 (isAwaiting) とは別で、タイムアウト後の訂正待ちも含む。
+    invoke-static {}, Lvn/com/bravesoft/androidapp/patch/PatchNotify;->wantsMenuUpdate()Z
 
     move-result v0
 
