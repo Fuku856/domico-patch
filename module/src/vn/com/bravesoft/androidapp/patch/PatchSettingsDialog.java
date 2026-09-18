@@ -9,6 +9,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.widget.CompoundButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
@@ -37,6 +38,11 @@ public final class PatchSettingsDialog {
 
     private static int dp(Context ctx, int value) {
         return (int) (ctx.getResources().getDisplayMetrics().density * value);
+    }
+
+    /** {@link #addRow} が組んだ行から、そのスイッチを取り出す。 */
+    private static View switchOf(LinearLayout row) {
+        return row.getChildAt(1);
     }
 
     /**
@@ -159,7 +165,7 @@ public final class PatchSettingsDialog {
                 "テレメトリ送信をブロック",
                 "Firebase Analytics / Crashlytics / Performance と広告 ID の送信をブロック。（アプリ通知は維持）",
                 PatchPrefs.KEY_TELEMETRY);
-        addRow(ctx, content,
+        LinearLayout checkinRow = addRow(ctx, content,
                 "時間外チェックイン",
                 "受付時間外でもチェックインボタンを押せるようにし、確認後にチェックイン。（既定オフ）",
                 PatchPrefs.KEY_CHECKIN);
@@ -169,13 +175,15 @@ public final class PatchSettingsDialog {
                         + "サーバー側に発覚するリスクがあります。（既定オフ）",
                 PatchPrefs.KEY_AUTO_CHECKIN);
 
-        // 親 (時間外チェックイン) が OFF なら子スイッチをグレーアウトして無効化
-        if (!PatchPrefs.checkinEnabled) {
-            autoCheckinRow.setAlpha(0.5f);
-            View toggle = autoCheckinRow.getChildAt(1);
-            if (toggle != null) {
-                toggle.setEnabled(false);
-            }
+        // 親 (時間外チェックイン) が OFF なら子行をグレーアウトして無効化する。
+        // 親トグルには gate 付きのリスナを貼り直し、画面を開き直さなくても
+        // 切り替えが即座に反映されるようにする。
+        PatchAutoCheckinGate gate = new PatchAutoCheckinGate(autoCheckinRow);
+        gate.run();
+        View parentToggle = switchOf(checkinRow);
+        if (parentToggle instanceof CompoundButton) {
+            ((CompoundButton) parentToggle).setOnCheckedChangeListener(
+                    new PatchSwitchListener(ctx, PatchPrefs.KEY_CHECKIN, gate));
         }
 
         addRow(ctx, content,
