@@ -146,9 +146,39 @@
   （親を OFF にした後も保留中ジョブがバックグラウンドで生き続け、次の時間内到達時に無断でチェックインが
   発火することを防ぐ）。`pendingFragment` は `WeakReference` 保持のため、`HomeFragment` インスタンスが
   GC されると保留も暗黙に消える（次にホーム画面を開くと再度 `showUICheckIn`→ボタン押下からやり直しになる）。
-- **既知の制限**: 自動送信が発火しても `CheckInDialog`/`CheckInCompletedDialog` は一切開かれない。
-  ユーザーが受け取る通知は最初の Toast のみで、実際に送信・成功したかどうかを確認する UI 通知はない。
-  完了確認はホーム画面のボタン状態変化（グレーアウト解除→チェックイン済み表示）を見るしかない。
+- **結果のシステム通知**: 自動送信が発火しても `CheckInDialog`/`CheckInCompletedDialog` は一切開かれない。
+  発火自体はアプリ前面時にしか起きない（`HomeFragment.setupObserveModelView` が **Fragment 自身**を
+  `LifecycleOwner` にして observe しているため、STARTED 未満では `showUICheckIn` が呼ばれない）が、
+  ユーザーが別タブ・別画面にいることはあるし、Toast は数秒で消えて履歴も残らない。さらに成否が分かるのは
+  送信から数十秒後で、その頃にはアプリを離れていることも多い。そこで `patch/PatchNotify`
+  （`module/src` の Java）が**固定 ID の通知 1 件を更新していく**形で結果を伝える。
+  1. 発火直後（`HomeModelView.checkIn()` の直後）に `onAutoCheckinFired()` →
+     「チェックインを送信しました。結果を確認しています…」を通知し、確認待ちに入る。
+  2. `startConfirmPolling()` が `pendingFragment` を張り直して 30 秒ポーリングを再開する
+     （発火直前の `clearPending()` で止まっているため）。`run()` は保留が無くても
+     `PatchNotify.isAwaiting()` が true の間はポーリングを続ける。
+  3. ポーリングで更新された DTO は `checkAndFire()` 冒頭の `PatchNotify.onMenuUpdate()` に渡され、
+     対象予約が `getCheckIn()!=0`（チェックイン済み）に変われば**同じ通知 ID** を
+     「チェックインが完了しました。」へ差し替える。
+  4. 3 分で決着しなければ `PatchNotify` 自前の Handler タイムアウトが
+     「送信しましたが完了を確認できませんでした。…」へ差し替える（ポーリングが途中で
+     止まっても通知が確認中のまま残らないようにするため）。
+  5. 送信直後にアプリを背面へ回すと 3. が届かず必ず 4. になってしまうため、打ち切った予約 ID を
+     `unconfirmedReservationId` に覚えておき、復帰後の更新でチェックイン済みと分かったら
+     「完了しました」へ**訂正**する。訂正待ちのためにポーリングは続けない
+     （`checkAndFire` の入口ガードは `wantsMenuUpdate()`、`run()` の継続判断は `isAwaiting()` と別物）。
+  通知チャンネルは自前の `domico_patch_checkin`（公式チャンネルは使わない）。小アイコンは
+  リソースを追加できないので `getIdentifier()` で実行時に解決し、無ければアプリアイコンで代用。
+  `POST_NOTIFICATIONS` は公式 manifest に宣言済み・実行時要求も公式が行うため manifest は触らない。
+  通知が無効化されている場合は前面 Activity があれば Toast にフォールバックする。
+- **成否判定に公式 LiveData を使わない理由**: `HomeModelView.getOnCheckInSuccess()` は単一消費の
+  `SingleLiveEvent` で、観測しているのは `CheckInDialog` だけ（自動発火経路ではそもそも開かれない）。
+  ここに自前 Observer を挿すと手動チェックイン経路とイベントの取り合いになり、完了ダイアログが
+  出なくなり得る。そのため公式 LiveData には触らず、既存ポーリングが返す `getCheckIn()` の
+  変化だけで判定する（`checkAndFire` が既に「済み」判定に使っているのと同じ値）。
+- **既知の制限**: 通知は「サーバーがチェックイン済みとして返してきたか」を見ているだけで、
+  失敗の理由（通信エラー / サーバー拒否）は区別できない。3 分以内に反映されなければ一律
+  「確認できませんでした」になる。
 
 ## ビルド方式: dex 差し替え（apktool 全体リビルドは使わない）
 apktool で `resources.arsc` / `AndroidManifest.xml` を再エンコードすると、一部端末（Xiaomi/HyperOS 等）が `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾く。そこで **外科的 dex 差し替え** に変更した。
