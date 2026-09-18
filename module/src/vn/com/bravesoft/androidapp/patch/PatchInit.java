@@ -7,8 +7,8 @@ import android.util.Log;
 /**
  * MyApplication.onCreate から呼ばれる唯一の入口。
  *
- * <p>設定の読み込み、テレメトリ停止、ロード入力ガード用の Activity トラッカ
- * 登録をまとめて行う。ここで落ちるとアプリが起動しなくなるため、全体を
+ * <p>設定の読み込み、通知ヘルパへの Context 受け渡し、テレメトリ停止、
+ * ロード入力ガード用の Activity トラッカ登録をまとめて行う。ここで落ちるとアプリが起動しなくなるため、全体を
  * catch して握り潰す。
  */
 public final class PatchInit {
@@ -21,6 +21,7 @@ public final class PatchInit {
         try {
             Context ctx = app.getApplicationContext();
             PatchPrefs.load(ctx);
+            PatchNotify.init(ctx);
             PatchTelemetry.apply(ctx);
             app.registerActivityLifecycleCallbacks(new PatchActivityTracker());
         } catch (Throwable ignored) {
