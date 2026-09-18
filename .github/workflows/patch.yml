@@ -67,8 +67,11 @@ jobs:
       - name: Set up Android SDK (build-tools)
         uses: android-actions/setup-android@v3
         with:
-          # 既定の 'tools' パッケージは SDK リポジトリから削除済みで
-          # インストールに失敗する。必要な物は次のステップで明示導入する。
+          # setup-android の packages 既定値は 'tools platform-tools' だが、
+          # 'tools'(旧 SDK Tools)は Google の SDK リポジトリから削除済みで
+          # "Warning: Failed to find package 'tools'" → sdkmanager が exit 1 になり
+          # ここでジョブごと落ちる。必要な build-tools / platform-tools は
+          # 次ステップで明示的に入れるので、ここでは何もインストールさせない。
           packages: ''
 
       - name: Install build-tools 35.0.0 + platform 35 (d8 / android.jar)
