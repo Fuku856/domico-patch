@@ -54,6 +54,36 @@
 - **方針**: 時間外＋未チェックイン時のみボタンを再有効化（見た目はグレー維持）し、タップで純正確認
   ダイアログ→OK で公式 `CheckInDialog` を開く。表示・通信ロジックは新規に書かず公式を再利用。既定オフ。
 
+## メッセージ通知への本文プレビュー調査（**実現不可**・2026-09-22）
+「受信メッセージの通知に本文が出ない」を改善しようとしたが、**dex-only パッチでは実現できない**と結論。
+再挑戦する前に本節を読むこと。
+
+- **通知の「メッセージが届きました」は公式仕様＝サーバが送る `notification.body`**。
+  `MyFirebaseMessagingService.sendNotification` は本文を `notification.getBody()` からしか取らず、
+  data から本文を読むコードは無い（data で読むのは `type` / `id` / `dormitory_code` のみ）。
+  固定文言が表示される＝**通知メッセージ型 push** である証拠。
+- **本文は push に載っていない**。body は汎用文言固定で、実際のメッセージ内容は認証付き
+  API (`v1/messages`) の奥にある。
+- **背面では `onMessageReceived` が呼ばれない**。通知メッセージ型は、アプリが背面/kill のとき
+  Android/FCM が直接通知を表示し、アプリのコードを一切通さない（FCM の仕様）。
+  → **パッチが割り込める場所が存在しない**。
+- **実証**: デバッグ用ダンプ `PatchPushDump`（`push_debug_log` トグル）入りビルドを入れ、トグル ON で
+  メッセージを受信しても `Android/data/jp.co.kyoritsu.domico/files` が作られない
+  ＝ `getExternalFilesDir` が一度も呼ばれない＝ハンドラ未実行。
+  インストール済み APK を `adb pull` して dex 内に `PatchPushDump` / `push_debug_log` が
+  含まれることは確認済みなので、「ビルドに入っていなかった」説は否定済み。
+  push 接続自体は正常（`GmsGcmMcsSvc` のハートビート疎通あり）。
+- **代替案もいずれも不可**:
+  - `NotificationListenerService` で横取り → 新規サービスの**マニフェスト登録が必須**。本プロジェクトは
+    dex-only（マニフェスト再エンコードは `INSTALL_FAILED_USER_RESTRICTED` を誘発。下記「実地知見」参照）。
+  - バックグラウンド API ポーリング → 背面/kill でプロセスが動かず（通知メッセージは起こさない）、
+    ColorOS 等は積極的に kill する。
+  - 別コンパニオンアプリ → 本文取得に Domico のログインセッションが必要で root 無しでは取得不可。
+- **唯一の未確定点**は「前面受信時の data payload の中身」。ただし**前面限定のプレビューは実用価値が
+  ほぼ無い**（アプリを開いているなら本文は読める）ため、確認しても結論は変わらない。
+- **残置物**: `PatchPushDump`（module/src の Java・`Download/domico-patch/` へ保存）と
+  `push_debug_log` トグルは**既定オフ**で dev に残してある。将来 push の中身を覗きたくなったら使える。
+
 ## 実地知見（Xiaomi POCO F7 Pro / HyperOS）
 - **apktool 全体リビルドは不可**: `resources.arsc` / `AndroidManifest` を再エンコードした base は `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾かれた。無改変で再署名しただけのセットは入るため、原因は再署名でも端末ポリシーでもなく apktool のリソース再構築と判明。→ `classes4.dex` のみ差し替える方式（[patch_apk.py](../scripts/patch_apk.py)）で解決。
 - **日本語**: 文言は base になく `config.ja` スプリット側にある。base の既定は英語。
