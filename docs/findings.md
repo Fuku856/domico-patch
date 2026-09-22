@@ -67,7 +67,17 @@
 - **背面では `onMessageReceived` が呼ばれない**。通知メッセージ型は、アプリが背面/kill のとき
   Android/FCM が直接通知を表示し、アプリのコードを一切通さない（FCM の仕様）。
   → **パッチが割り込める場所が存在しない**。
-- **実証**: デバッグ用ダンプ `PatchPushDump`（`push_debug_log` トグル）入りビルドを入れ、トグル ON で
+- **決定的証拠: その通知を出したのはアプリではなく FCM SDK**（端末ログ 2026-09-22 20:02 / LogFox）。
+  通知キーが `0|jp.co.kyoritsu.domico|0|FCM-Notification:322915822|10410`
+  （形式は `userId|pkg|通知ID|タグ|uid`）＝ **タグ `FCM-Notification:<uptime>` + 通知ID `0`**。
+  これは Firebase Messaging SDK が通知メッセージを自動表示するときの固有形式。公式の
+  `sendNotification` は `notify(int id, Notification)` を**タグ無し**・id=`currentTimeMillis()/1000`
+  で呼ぶため、この形には決してならない。
+  さらにタップ時の起動が `START ... act=android.intent.action.MAIN cat=[LAUNCHER] ... (has extras)`
+  ＝ FCM SDK の既定動作（アプリ自身の経路なら `new Intent(this, MainActivity.class)` の明示 Intent に
+  `type`/`id` を putExtra したものになる）。
+  → **アプリのコードを一度も通さずに通知が表示されている**ことが直接確認できた。
+- **傍証**: デバッグ用ダンプ `PatchPushDump`（`push_debug_log` トグル）入りビルドを入れ、トグル ON で
   メッセージを受信しても `Android/data/jp.co.kyoritsu.domico/files` が作られない
   ＝ `getExternalFilesDir` が一度も呼ばれない＝ハンドラ未実行。
   インストール済み APK を `adb pull` して dex 内に `PatchPushDump` / `push_debug_log` が
