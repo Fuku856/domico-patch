@@ -29,8 +29,12 @@ trim = true
 conventional_commits = true
 filter_unconventional = true
 split_commits = false
-# タグ patch-vX.Y.Z のみをリリース境界として扱う(ベース追従タグは無視)。
-tag_pattern = "patch-v[0-9]*"
+# タグ patch-vX.Y.Z のみをリリース境界として扱う(ベース追従タグ v{vn}-patch と
+# dev プレリリース patch-vX.Y.Z-dev.N は無視)。
+# git-cliff 2.x の tag_pattern は glob ではなく **正規表現** かつ部分一致なので、
+# 旧設定 "patch-v[0-9]*" は patch-v0.6.0-dev.1 にも前方一致でマッチしてしまい、
+# dev タグが CHANGELOG の節として混ざっていた。^...$ で完全一致に固定する。
+tag_pattern = '^patch-v[0-9]+\.[0-9]+\.[0-9]+$'
 # マージコミット等のノイズを除外。
 commit_preprocessors = []
 commit_parsers = [

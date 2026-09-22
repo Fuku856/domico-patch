@@ -51,7 +51,7 @@ def run(cmd, **kw):
 def compute_patch_version(channel, app_version):
     """Conventional Commits からパッチ版表示文字列を組み立てる(version.py に委譲)。
 
-    例: release -> 'v0.3.0 / base v1.5.4' / dev -> 'v0.3.0-dev+g02322bf / base v1.5.4'
+    例: release -> 'v0.3.0 / base v1.5.4' / dev -> 'v0.4.0-dev.2+g02322bf / base v1.5.4'
     git 履歴やタグが読めない等で version.py 解決に失敗した場合のみ
     'domico-patch dev' にフォールバックする。
     """
@@ -155,7 +155,7 @@ def main():
     ap.add_argument("--app-version", help="versionName。.apks 同梱物の命名 + パッチ版表示の base に使用")
     ap.add_argument("--patch-version", help="設定画面に表示するパッチ版。未指定なら Conventional Commits から自動算出。")
     ap.add_argument("--channel", choices=["release", "dev"], default="release",
-                    help="パッチ版の表示チャンネル。dev は -dev+g<sha> を付与。")
+                    help="パッチ版の表示チャンネル。dev は -dev.<N>+g<sha> を付与。")
     ap.add_argument("--install", action="store_true", help="adb install-multiple まで実行")
     args = ap.parse_args()
 

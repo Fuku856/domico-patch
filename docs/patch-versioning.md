@@ -36,9 +36,12 @@ v0.3.0 / base v1.5.4
 | チャンネル | 形式 | 例 | 用途 |
 |-----------|------|----|------|
 | `release` | `v{X.Y.Z} / base v{app}` | `v0.3.0 / base v1.5.4` | 本番ビルド（`patch.yml`） |
-| `dev` | `v{X.Y.Z}-dev+g{sha}[.dirty] / base v{app}` | `v0.3.0-dev+g7afd66a2 / base v1.5.4` | dev プレリリース（`dev-prerelease.yml`） |
+| `dev` | `v{X.Y.Z}-dev.{N}+g{sha}[.dirty] / base v{app}` | `v0.4.0-dev.2+g7afd66a2 / base v1.5.4` | dev プレリリース（`dev-prerelease.yml`） |
 
-- `-dev+g{sha}`: dev ビルドに短縮コミット SHA を付け、追跡可能にする。
+- `-dev.{N}`: セムバーの**プレリリース識別子**。同じ次版に対する dev ビルドの連番。
+  `0.4.0-dev.1 < 0.4.0-dev.2 < 0.4.0` という順序が成り立つ（[プレリリース部分は
+  リリース版より小さい](https://semver.org/lang/ja/#spec-item-9)）。
+- `+g{sha}`: dev ビルドに短縮コミット SHA を付け、追跡可能にする（ビルドメタデータ）。
 - `.dirty`: 未コミットの変更があるローカルビルドのみ付与（CI のクリーン checkout では付かない）。
 - `base` はビルド時に `--app-version` で渡された公式 `versionName`。未指定なら ` / base ...` を省略。
 
@@ -61,6 +64,35 @@ v0.3.0 / base v1.5.4
 増分が複数該当する場合は最大のものを採用（major > minor > patch）。
 基準タグ以降にリリース対象コミットが無ければ据え置き＝新リリースなし。
 
+> **1リリース = 1 bump**（重要）
+>
+> 適用するのは「最も強いレベルを**1回だけ**」であって、コミット本数分ではない。
+> このリポジトリは **main へのマージ 1 回 = 1 リリース**なので、`feat` が 3 本
+> 入ったマージでも版は minor 1 段だけ進む（`0.5.3` → `0.6.0`、`0.8.2` ではない）。
+> セムバーの番号は「そのリリースが含む変更の**重さ**」を表すものであって、
+> コミット数を表すものではないため。ReVanced など Android のパッチ系リポジトリが
+> 使う semantic-release と同じ刻み方。
+>
+> この方式では **dev→main を squash しても最終的な版はずれない**
+> （squash 後のメッセージに `feat:` / `fix:` 等の種別が残っていればよい）。
+
+### dev プレリリースの連番
+
+main にマージする前の dev ビルドは、版番号を進めるのではなく**プレリリース連番**で
+区別する。`N` は既存の `patch-v{X.Y.Z}-dev.*` タグの最大 + 1（無ければ 1）。
+
+```
+patch-v0.6.0-dev.1  ← dev で 1 回目のプレリリース
+patch-v0.6.0-dev.2  ← コミットを積んで 2 回目
+patch-v0.6.0-dev.3
+patch-v0.6.0        ← main マージ＝本リリース（必ずここに収束する）
+```
+
+ビルドごとに別タグが残るので Releases 一覧に履歴が並び、かつ本リリースの番号は
+dev で何回ビルドしたかに左右されない。`patch-v*-dev.*` は基準タグとして数えられない
+（[`version.py`](../scripts/version.py) の `_TAG_RE` が完全一致で弾く）ため、
+dev 側のビルド回数が本番の版を汚すこともない。
+
 > **初期版**: タグが無い状態では全履歴を走査する。現在の履歴には破壊的変更が
 > 無く `feat:` を含むため minor 算出で **`0.1.0`** になる。初回 main リリースで
 > `release.yml` が `patch-v0.1.0` を自動作成し、以降はそのタグが基準になる。
@@ -73,10 +105,16 @@ v0.3.0 / base v1.5.4
 |------|----|-----------|-----------|
 | `patch-v{X.Y.Z}` | `patch-v0.3.0` | **パッチ版**の確定（CHANGELOG 境界） | `release.yml`（main push 時） |
 | `v{versionName}-patch` | `v1.5.4-patch` | **ベース追従**ビルドの Release | `patch.yml`（公式更新検知時） |
-| `patch-v{X.Y.Z}-dev` | `patch-v0.3.0-dev` | dev プレリリース（パッチ版 X.Y.Z の検証）| `dev-prerelease.yml` |
+| `patch-v{X.Y.Z}-dev.{N}` | `patch-v0.6.0-dev.2` | dev プレリリース（パッチ版 X.Y.Z の検証）| `dev-prerelease.yml` |
 
-`version.py` と `cliff.toml` はバージョン境界として **`patch-v*` のみ**を見る
-（ベース追従タグは無視する）。
+`version.py` と `cliff.toml` はバージョン境界として **`patch-v{X.Y.Z}` のみ**を見る
+（ベース追従タグと dev プレリリースタグは無視する）。どちらも
+`^patch-v[0-9]+\.[0-9]+\.[0-9]+$` の完全一致で判定する。
+
+> 旧 `cliff.toml` の `tag_pattern = "patch-v[0-9]*"` は、git-cliff 2.x では
+> glob ではなく**部分一致の正規表現**として解釈されるため `patch-v0.6.0-dev` にも
+> マッチしてしまい、CHANGELOG に `## [0.6.0-dev]` のような dev 節が混入していた。
+> 現在は `^...$` で固定済み。
 
 ---
 
@@ -136,12 +174,15 @@ patch_smali.py  → PatchInfo.smali の VERSION フィールドを上書き
 ### 版を上げる
 **コミットメッセージを Conventional Commits で書くだけ**。版上げの手動操作は不要。
 
-| やりたいこと | コミット例 | 結果 |
+| やりたいこと | コミット例 | そのリリースの結果 |
 |--------------|-----------|------|
 | バグ修正 | `fix: ロード遮断の誤判定を修正` | patch +1 |
 | 機能追加 | `feat: 設定にダークモードを追加` | minor +1 |
 | 互換性破壊 | `feat!: 設定キーを刷新` | major +1 |
 | 文書のみ | `docs: README 更新` | 据え置き |
+
+「結果」は**リリース単位**の話で、コミット単位ではない。1 回のリリースに `feat` が
+3 本と `fix` が 2 本入っていても、上がるのは minor 1 段だけ（`0.5.3` → `0.6.0`）。
 
 dev に積んだコミットが **main にマージされた時点**で `release.yml` が版を確定する
 （dev→main マージ＝パッチリリース）。
@@ -158,6 +199,7 @@ python scripts/build.py … --patch-version "v1.0.0 / base v1.5.4"
 python scripts/version.py                              # release 表示
 python scripts/version.py --channel dev --app-version 1.5.4
 python scripts/version.py --number-only --print-bumped # 次版 + 増分有無(1/0)
+python scripts/version.py --dev-seq                    # 次の dev プレリリース連番 N
 ```
 
 ---

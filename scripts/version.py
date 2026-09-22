@@ -6,29 +6,36 @@
 であり、パッチ自身のバージョンとは別軸。そこでパッチ版は git 履歴から独立に算出する:
 
   - 基準(baseline): `patch-v{X.Y.Z}` タグのうち最大セムバー(無ければ 0.0.0)。
-      `patch-v*-dev`(dev プレリリース)は `_TAG_RE` が弾くため基準にならない。
-  - 増分(bump): 基準タグ以降のリリース対象コミットを 1 本ずつ累積適用する
-      (最高レベルを 1 回だけ適用する旧方式ではない。詳細は `_apply_bumps`)。
-      各コミットのレベル判定:
+      dev プレリリースのタグ(`patch-v{X.Y.Z}-dev.{N}`)は `_TAG_RE` が弾くため
+      基準にならない。
+  - 増分(bump): 基準タグ以降のリリース対象コミットのうち **最も強いレベルを1回だけ**
+      適用する。main へのマージ 1 回 = 1 リリース = 1 bump。
         `type!:` もしくは本文に `BREAKING CHANGE` -> major (M+1,0,0)
         `feat:`                                   -> minor (M,m+1,0)
         `fix:` / `perf:` / `refactor:`            -> patch (M,m,p+1)
-        それ以外(docs/ci/chore 等)                -> スキップ(版を進めない)
-      よってリリース対象コミット本数だけ patch が刻まれる(v0.3.1, 0.3.2, ...)。
-  - 表示(display): `v{X.Y.Z}[-dev+g{sha}[.dirty]][ / base v{app}]`
+        それ以外(docs/ci/chore 等)                -> リリース対象外
+      セムバーの番号は「そのリリースが含む変更の最大の重さ」を表すので、feat が
+      何本入っていてもリリースとしては minor 1 回(0.5.3 -> 0.6.0)。コミット本数
+      では刻まない。
+  - dev プレリリース: 同じ次版に対して `-dev.{N}` の連番を振る(N は既存の
+      `patch-v{X.Y.Z}-dev.*` タグの最大 + 1、無ければ 1)。
+        0.6.0-dev.1 < 0.6.0-dev.2 < 0.6.0
+      とセムバーのプレリリース順序が保たれ、本リリースは必ず 0.6.0 に収束する。
+      「dev ビルドごとに別タグを残す」要件は版番号ではなくこの連番が担う。
+  - 表示(display): `v{X.Y.Z}[-dev.{N}+g{sha}[.dirty]][ / base v{app}]`
 
-前提: dev→main のマージは squash ではなくマージコミットで行うこと。累積 bump は
-`{基準タグ}..HEAD` の全コミットを数えるため、squash すると main 側で本数が潰れ、
-dev プレリリースで刻んだ版と最終リリース版が食い違う(発散する)。
+bump はコミット本数ではなく最高レベル 1 回なので、dev->main のマージを squash しても
+最終的な版はずれない(squash 後のメッセージに `feat:`/`fix:` 等の種別が残っていればよい)。
 
-タグ作成(リリース確定)は CI(.github/workflows/release.yml の git-cliff)が行い、
-ここはタグを「読む」だけ。タグが無くても次版を算出して表示できる。
+タグ作成(リリース確定)は CI(.github/workflows/release.yml)が行い、ここはタグを
+「読む」だけ。タグが無くても次版を算出して表示できる。
 
 CLI:
   python scripts/version.py                          -> 表示文字列(release)
-  python scripts/version.py --channel dev            -> dev 表示(`-dev+g<sha>`)
+  python scripts/version.py --channel dev            -> dev 表示(`-dev.N+g<sha>`)
   python scripts/version.py --app-version 1.5.4      -> ` / base v1.5.4` を付与
   python scripts/version.py --number-only            -> `X.Y.Z` のみ(タグ/CHANGELOG 用)
+  python scripts/version.py --dev-seq                -> dev プレリリース連番 N のみ
 """
 import argparse
 import os
@@ -40,6 +47,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 TAG_PREFIX = "patch-v"
 _TAG_RE = re.compile(r"^patch-v(\d+)\.(\d+)\.(\d+)$")
+# dev プレリリースタグ。`.N` 無しは旧形式(`patch-v0.6.0-dev`)で、連番 0 とみなす。
+_DEV_TAG_RE = re.compile(r"^patch-v(\d+)\.(\d+)\.(\d+)-dev(?:\.(\d+))?$")
 # Conventional Commits ヘッダ: `type(scope)!: subject`
 _HEADER_RE = re.compile(r"^(?P<type>[a-zA-Z]+)(?:\([^)]*\))?(?P<bang>!)?:")
 
@@ -88,6 +97,7 @@ def _commit_messages_since(tag):
 
 
 _TYPE_LEVEL = {"feat": "minor", "fix": "patch", "perf": "patch", "refactor": "patch"}
+_RANK = {"patch": 1, "minor": 2, "major": 3}
 
 
 def _commit_level(msg):
@@ -104,36 +114,33 @@ def _commit_level(msg):
     return _TYPE_LEVEL.get(m.group("type").lower())
 
 
-def _apply_bumps(base, messages_newest_first):
-    """基準版に各コミットの増分を古い順へ累積適用し、(最終版, 最高レベル) を返す。
+def _highest_level(messages):
+    """コミット群の中で最も強い増分レベルを返す。対象が無ければ None。"""
+    top = None
+    for msg in messages:
+        lvl = _commit_level(msg)
+        if lvl is None:
+            continue
+        if top is None or _RANK[lvl] > _RANK[top]:
+            top = lvl
+    return top
 
-    セムバー標準どおり上位を上げたら下位はリセットする:
-      major -> (M+1, 0, 0) / minor -> (M, m+1, 0) / patch -> (M, m, p+1)
 
-    従来の「基準以降で最高レベルを 1 回だけ適用」と違い、リリース対象コミット
-    1 本ごとに版を進める(=コミット本数だけ単調増加)。これにより main←dev
-    マージ前の dev プレリリースは、新しいコミットが積まれるたびに
-    パッチ番号を刻む(v0.3.1, 0.3.2, ...)。パッチ番号は単なる整数なので
-    0.3.9 の次は 0.3.10 と桁上がりせず続く。feat が入れば minor が上がり
-    パッチは 0 に戻る。基準タグ(patch-v*)は公式リリース時のみ付くため、
-    dev プレリリースのタグ(patch-v*-dev)は基準を汚さない。
+def _apply_bump(base, level):
+    """基準版に増分を **1 回だけ** 適用する。上位を上げたら下位はリセット。
+
+    リリース 1 回 = bump 1 回。リリース対象コミットが何本あっても、版は最も強い
+    レベルの分だけ進む(feat 3 本 + fix 2 本 -> minor 1 回 -> 0.5.3 -> 0.6.0)。
+    セムバーの番号は変更の「重さ」を表すものであって、コミット数ではないため。
     """
     M, m, p = base
-    rank = {"patch": 1, "minor": 2, "major": 3}
-    top = None
-    for msg in reversed(messages_newest_first):  # git log は新しい順 -> 古い順に再生
-        lvl = _commit_level(msg)
-        if lvl == "major":
-            M, m, p = M + 1, 0, 0
-        elif lvl == "minor":
-            m, p = m + 1, 0
-        elif lvl == "patch":
-            p = p + 1
-        else:
-            continue
-        if top is None or rank[lvl] > rank[top]:
-            top = lvl
-    return (M, m, p), top
+    if level == "major":
+        return (M + 1, 0, 0)
+    if level == "minor":
+        return (M, m + 1, 0)
+    if level == "patch":
+        return (M, m, p + 1)
+    return base
 
 
 def next_version():
@@ -142,16 +149,37 @@ def next_version():
       base    : (M,m,p)   基準タグの版
       tag     : str|None  基準タグ
       version : (M,m,p)   算出した次版(増分なしなら base と同じ)
-      level   : str|None  適用した増分の最高レベル
+      level   : str|None  適用した増分のレベル
       bumped  : bool      base から進んだか
     """
     base, tag = latest_tag()
     msgs = _commit_messages_since(tag)
-    nxt, level = _apply_bumps(base, msgs)
+    level = _highest_level(msgs)
+    nxt = _apply_bump(base, level)
     return {
         "base": base, "tag": tag, "version": nxt,
         "level": level, "bumped": nxt != base,
     }
+
+
+def dev_seq(version):
+    """version に対する次の dev プレリリース連番 N を返す(既存タグの最大 + 1)。
+
+    `patch-v{X.Y.Z}-dev.{N}` タグを走査するだけなので、CI では checkout 時に
+    `fetch-tags: true` が必要。旧形式の `patch-v{X.Y.Z}-dev`(連番なし)は 0 と
+    みなすため、混在していても次は 1 以上になる。
+    """
+    out = _git(["tag", "--list", f"{TAG_PREFIX}{vstr(version)}-dev*"], default="") or ""
+    best = 0
+    for line in out.splitlines():
+        m = _DEV_TAG_RE.match(line.strip())
+        if not m:
+            continue
+        if (int(m.group(1)), int(m.group(2)), int(m.group(3))) != tuple(version):
+            continue
+        n = int(m.group(4)) if m.group(4) else 0
+        best = max(best, n)
+    return best + 1
 
 
 def short_sha():
@@ -172,7 +200,9 @@ def format_version(channel="release", app_version=None):
     info = next_version()
     core = f"v{vstr(info['version'])}"
     if channel == "dev":
-        suffix = f"-dev+g{short_sha()}"
+        # `-dev.N` はセムバーのプレリリース識別子、`+g<sha>` はビルドメタデータ。
+        # 0.6.0-dev.2 < 0.6.0 の順序が保たれる。
+        suffix = f"-dev.{dev_seq(info['version'])}+g{short_sha()}"
         if is_dirty():
             suffix += ".dirty"
         core += suffix
@@ -190,7 +220,13 @@ def main():
                     help="算出した次版を X.Y.Z 形式でのみ出力(タグ/CHANGELOG 用)")
     ap.add_argument("--print-bumped", action="store_true",
                     help="基準タグから増分があれば 1、無ければ 0 を最後に出力")
+    ap.add_argument("--dev-seq", action="store_true",
+                    help="次版に対する dev プレリリース連番 N のみ出力")
     args = ap.parse_args()
+
+    if args.dev_seq:
+        sys.stdout.write(str(dev_seq(next_version()["version"])) + "\n")
+        return
 
     if args.number_only:
         info = next_version()
