@@ -11,7 +11,7 @@
 ### 必要ツール
 - JDK 17+（`JAVA_HOME` 設定）
 - Android SDK build-tools（`zipalign` / `apksigner`）、platform-tools（`adb`）
-- `tools/baksmali.jar`、`tools/smali.jar`、Python 3
+- `tools/baksmali.jar`、`tools/smali.jar`、`tools/APKEditor.jar`（[APKEditor](https://github.com/REAndroid/APKEditor/releases) 1.4.9。split のマージ用）、Python 3
 
 ### 手順
 ```powershell
@@ -25,24 +25,26 @@ powershell -ExecutionPolicy Bypass -File scripts/pull-splits.ps1
 # 3) dex 差し替えパッチ + 全スプリット再署名
 python scripts/build.py --input work/device_splits `
   --keystore work/domico.keystore --ks-pass "<pass>" --alias domico
-#   → work/out/ に署名済みの base.apk と split_config.*.apk
+#   → work/out/domico-patch.apk（全スプリットをマージした単一 APK）
+#     work/out/splits/ に署名済みの base.apk と split_config.*.apk
 ```
 
 ### インストール
 ```cmd
 set "adb=%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"
 "%adb%" uninstall jp.co.kyoritsu.domico
-"%adb%" install-multiple --no-incremental -r work\out\*.apk
+"%adb%" install -r work\out\domico-patch.apk
 ```
-- ファイル名は `dir work\out` の実出力に合わせる。
+- 単一 APK が弾かれる場合（下記 HyperOS の注意）は分割のまま入れる:
+  `"%adb%" install-multiple --no-incremental -r work\out\splits\*.apk`
 - `DELETE_FAILED_INTERNAL_ERROR` が出たら、端末でアイコン長押し→削除してから再実行。
-- adb が弾かれる端末は Shizuku 対応インストーラで `work/out` の apk 群を入れてもよい。
+- adb が弾かれる端末は Shizuku 対応インストーラで `work/out/splits` の apk 群を入れてもよい。
 
 ## B. GitHub Actions（更新検知 → 自動パッチ → Release）
 
 [`.github/workflows/patch.yml`](../.github/workflows/patch.yml):
 - 毎日 公式更新を検知し、Google Play（`locale=ja_JP`）で取得する。
-- dex 差し替えパッチ + 再署名し、全スプリットを1つにまとめた `domico-<version>-patch.apks` を Release に添付する。
+- dex 差し替えパッチ + 再署名し、全スプリットを [APKEditor](https://github.com/REAndroid/APKEditor) で 1 つにマージした `domico-<version>-patch.apk` を Release に添付する。
 - `workflow_dispatch` で手動実行も可（`force=true` で同一版でも再ビルド）。
 
 ### 初期設定（Secrets / apkeep）
@@ -52,8 +54,10 @@ AAS トークンの取得手順・ハマりどころは **[ci-setup.md](ci-setup
 > 取得できる密度・ABI は apkeep の既定デバイスプロファイル依存。端末に完全一致させたい場合は A（端末 pull）を使う。
 
 ### 取得・インストール
-Releases の `domico-<version>-patch.apks`（分割APKを1つにまとめたもの）を取得し、SAI / Shizuku 等の分割対応インストーラでこの 1 ファイルを選んで入れる。日本語（`config.ja`）も同梱済み。
-- adb で入れる場合は `.apks` を unzip し、出てきた `*.apk` を `adb install-multiple --no-incremental -r` する。
+Releases の `domico-<version>-patch.apk`（分割APKを1つにマージした単一 APK）を取得し、通常の APK と同じように入れる。日本語（`config.ja`）もマージ済み。
+- Obtainium で追跡する場合は、APK フィルタ正規表現に `-patch\.apk$` を設定すると公式ミラー（`-official.apks`）を確実に除外できる。
+- adb で入れる場合は `adb install -r domico-<version>-patch.apk`。
+- マージ時に `resources.arsc` / `AndroidManifest` が作り直されるため、HyperOS 等で `INSTALL_FAILED_USER_RESTRICTED` になる場合は A（ローカルビルド）の `work/out/splits` を `adb install-multiple` で入れる（[findings.md](findings.md)）。
 - 公式版とは署名が異なるため、初回は公式版のアンインストールが必要。
 
 ## 注意（ToS / 法務）

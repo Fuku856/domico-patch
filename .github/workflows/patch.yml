@@ -1,8 +1,8 @@
 name: Patch Domico (auto)
 
 # 公式 Domico の更新を検知し、APK を取得して B案パッチ(起動時ログイン通知の
-# タッチ遮断解除)を classes4.dex 差し替えで適用・再署名し、全スプリットを1つに
-# まとめた .apks を Release(v{vn}-patch)に添付する。手動実行も可。
+# タッチ遮断解除)を classes4.dex 差し替えで適用・再署名し、全スプリットを
+# APKEditor で 1 つの .apk にマージして Release(v{vn}-patch)に添付する。手動実行も可。
 #
 # あわせて、公式版が更新されるたびに「未加工・公式署名のままの公式 APK」を
 # 独立 Release(v{vn}-official)として自動アーカイブする。これはパッチ適合可否に
@@ -47,6 +47,8 @@ env:
   PACKAGE: jp.co.kyoritsu.domico
   BAKSMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
   SMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar"
+  # split 群を単一 .apk にマージする(scripts/build.py が tools/APKEditor.jar を使用)
+  APKEDITOR_URL: "https://github.com/REAndroid/APKEditor/releases/download/V1.4.9/APKEditor-1.4.9.jar"
 
 jobs:
   patch:
@@ -77,21 +79,23 @@ jobs:
       - name: Install build-tools 35.0.0 + platform 35 (d8 / android.jar)
         run: sdkmanager "build-tools;35.0.0" "platform-tools" "platforms;android-35"
 
-      - name: Cache smali/baksmali
+      - name: Cache smali/baksmali/APKEditor
         id: cache-smali
         uses: actions/cache@v4
         with:
           path: |
             tools/baksmali.jar
             tools/smali.jar
-          key: smali-3.0.9
+            tools/APKEditor.jar
+          key: smali-3.0.9-apkeditor-1.4.9
 
-      - name: Download smali/baksmali
+      - name: Download smali/baksmali/APKEditor
         if: steps.cache-smali.outputs.cache-hit != 'true'
         run: |
           mkdir -p tools
           curl -L -o tools/baksmali.jar "$BAKSMALI_URL"
           curl -L -o tools/smali.jar "$SMALI_URL"
+          curl -fL -o tools/APKEditor.jar "$APKEDITOR_URL"
 
       - name: Install apkeep (APK downloader)
         run: |
@@ -242,7 +246,7 @@ jobs:
             --app-version "${{ steps.check.outputs.vn }}" \
             --channel release
 
-      - name: Publish Release (attach single .apks bundle)
+      - name: Publish Release (attach single merged .apk)
         if: steps.check.outputs.new == 'true' || inputs.force
         run: |
           # gh release create は --clobber 非対応 & 既存タグだと失敗するため、
@@ -253,7 +257,7 @@ jobs:
           # (--notes と --generate-notes 併用時、生成分は --notes の後ろに追記される)
           # (インストール方法やパッチ説明は README / docs に集約し、ここには載せない)
           gh release create "${{ steps.check.outputs.tag }}" \
-            work/out/domico-${{ steps.check.outputs.vn }}-patch.apks \
+            work/out/domico-${{ steps.check.outputs.vn }}-patch.apk \
             --title "[Patched] Domico v${{ steps.check.outputs.vn }}" \
             --notes "Base Version: ${{ steps.check.outputs.vn }} (versionCode ${{ steps.check.outputs.vc }})" \
             --generate-notes

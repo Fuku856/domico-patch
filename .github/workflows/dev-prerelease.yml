@@ -48,6 +48,8 @@ env:
   PACKAGE: jp.co.kyoritsu.domico
   BAKSMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
   SMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar"
+  # split 群を単一 .apk にマージする(scripts/build.py が tools/APKEditor.jar を使用)
+  APKEDITOR_URL: "https://github.com/REAndroid/APKEditor/releases/download/V1.4.9/APKEditor-1.4.9.jar"
 
 jobs:
   prerelease:
@@ -105,7 +107,7 @@ jobs:
         if: env.SKIP != 'true'
         run: sdkmanager "build-tools;35.0.0" "platform-tools" "platforms;android-35"
 
-      - name: Cache smali/baksmali
+      - name: Cache smali/baksmali/APKEditor
         if: env.SKIP != 'true'
         id: cache-smali
         uses: actions/cache@v4
@@ -113,14 +115,16 @@ jobs:
           path: |
             tools/baksmali.jar
             tools/smali.jar
-          key: smali-3.0.9
+            tools/APKEditor.jar
+          key: smali-3.0.9-apkeditor-1.4.9
 
-      - name: Download smali/baksmali
+      - name: Download smali/baksmali/APKEditor
         if: env.SKIP != 'true' && steps.cache-smali.outputs.cache-hit != 'true'
         run: |
           mkdir -p tools
           curl -L -o tools/baksmali.jar "$BAKSMALI_URL"
           curl -L -o tools/smali.jar "$SMALI_URL"
+          curl -fL -o tools/APKEditor.jar "$APKEDITOR_URL"
 
       - name: Install apkeep (APK downloader)
         if: env.SKIP != 'true'
@@ -225,8 +229,8 @@ jobs:
         if: env.SKIP != 'true'
         id: bundle
         run: |
-          FNAME="domico-patch-v${{ steps.pver.outputs.version }}-dev.${{ steps.pver.outputs.seq }}-base${{ steps.check.outputs.vn }}.apks"
-          mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apks "work/out/$FNAME"
+          FNAME="domico-patch-v${{ steps.pver.outputs.version }}-dev.${{ steps.pver.outputs.seq }}-base${{ steps.check.outputs.vn }}.apk"
+          mv work/out/domico-${{ steps.check.outputs.vn }}-patch.apk "work/out/$FNAME"
           echo "fname=$FNAME" >> "$GITHUB_OUTPUT"
           ls -la work/out/
 
@@ -236,7 +240,7 @@ jobs:
         if: env.SKIP != 'true' && !inputs.publish
         uses: actions/upload-artifact@v4
         with:
-          name: domico-patch-dev-apks
+          name: domico-patch-dev-apk
           path: work/out/${{ steps.bundle.outputs.fname }}
           retention-days: 7
 

@@ -64,13 +64,13 @@
   - 例: `patch-v0.6.0-dev.2`
   - タイトル: `[Preview] Patch vX.Y.Z / Base X.X.X`
   - ラベル: **Pre-release**（GitHub UI でオレンジ色で表示）
-  - 添付ファイル: `domico-patch-vX.Y.Z-dev.N-baseX.X.X.apks`
+  - 添付ファイル: `domico-patch-vX.Y.Z-dev.N-baseX.X.X.apk`
 
 ---
 
 ## インストール
 
-本番リリースと同じ手順。`.apks` を SAI / Shizuku 等の分割対応インストーラで入れる。
+本番リリースと同じ手順。単一 `.apk` を通常どおり入れる。
 詳細は [install.md](install.md)。
 
 ---

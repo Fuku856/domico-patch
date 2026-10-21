@@ -27,6 +27,8 @@ env:
   PACKAGE: jp.co.kyoritsu.domico
   BAKSMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/baksmali-3.0.9-fat-release.jar"
   SMALI_URL: "https://github.com/baksmali/smali/releases/download/3.0.9/smali-3.0.9-fat-release.jar"
+  # split 群を単一 .apk にマージする(scripts/build.py が tools/APKEditor.jar を使用)
+  APKEDITOR_URL: "https://github.com/REAndroid/APKEditor/releases/download/V1.4.9/APKEditor-1.4.9.jar"
 
 jobs:
   release:
@@ -146,21 +148,23 @@ jobs:
       - name: Install build-tools 35.0.0 + platform 35 (d8 / android.jar)
         run: sdkmanager "build-tools;35.0.0" "platform-tools" "platforms;android-35"
 
-      - name: Cache smali/baksmali
+      - name: Cache smali/baksmali/APKEditor
         id: cache-smali
         uses: actions/cache@v4
         with:
           path: |
             tools/baksmali.jar
             tools/smali.jar
-          key: smali-3.0.9
+            tools/APKEditor.jar
+          key: smali-3.0.9-apkeditor-1.4.9
 
-      - name: Download smali/baksmali
+      - name: Download smali/baksmali/APKEditor
         if: steps.cache-smali.outputs.cache-hit != 'true'
         run: |
           mkdir -p tools
           curl -L -o tools/baksmali.jar "$BAKSMALI_URL"
           curl -L -o tools/smali.jar "$SMALI_URL"
+          curl -fL -o tools/APKEditor.jar "$APKEDITOR_URL"
 
       - name: Install apkeep (APK downloader)
         run: |
@@ -234,7 +238,7 @@ jobs:
             --app-version "${{ steps.probe.outputs.vn }}" \
             --patch-version "v${{ steps.target.outputs.ver }} / base ${{ steps.probe.outputs.vn }}"
 
-      - name: Attach .apks to patch-v release
+      - name: Attach .apk to patch-v release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.target.outputs.tag }}
@@ -243,8 +247,8 @@ jobs:
         run: |
           # 再実行に備え --clobber で同名アセットを上書きする。アセット名には
           # パッチ版と公式ベース版の両方を含め、どの組合せか分かるようにする。
-          OUT="domico-v${VER}-base${VN}-patch.apks"
-          cp "work/out/domico-${VN}-patch.apks" "$OUT"
+          OUT="domico-v${VER}-base${VN}-patch.apk"
+          cp "work/out/domico-${VN}-patch.apk" "$OUT"
           gh release upload "$TAG" "$OUT" --clobber
           echo "attached $OUT to $TAG"
 

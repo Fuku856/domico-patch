@@ -81,7 +81,8 @@ powershell -ExecutionPolicy Bypass -File scripts/setup-signing.ps1
 powershell -ExecutionPolicy Bypass -File scripts/pull-splits.ps1
 # dex差し替えパッチ＋再署名
 python scripts/build.py --input work/device_splits --keystore work/domico.keystore --ks-pass <pass> --alias domico
-# 出力: work/out/*.apk → adb install-multiple --no-incremental -r work\out\*.apk
+# 出力: work/out/domico-patch.apk → adb install -r work\out\domico-patch.apk
+#       (分割のまま入れるなら adb install-multiple --no-incremental -r work\out\splits\*.apk)
 ```
 詳細は [docs/install.md](docs/install.md)。
 

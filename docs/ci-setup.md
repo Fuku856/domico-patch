@@ -1,7 +1,7 @@
 # CI セットアップ手順（apkeep + GitHub Secrets）
 
 GitHub Actions（[`.github/workflows/patch.yml`](../.github/workflows/patch.yml)）で、公式 Domico の
-更新検知 → Google Play から取得 → dex 差し替えパッチ → 再署名 → `.apks` を Release 添付、までを
+更新検知 → Google Play から取得 → dex 差し替えパッチ → 再署名 → 単一 `.apk` にマージして Release 添付、までを
 自動化するための初期設定。**一度設定すれば以後は毎日自動実行**される。
 
 CI が APK 取得に使うのが [apkeep](https://github.com/EFForg/apkeep)。apkeep のインストール自体は
@@ -110,13 +110,13 @@ gh secret list
    - **Download latest Domico** ステップに **`jp.co.kyoritsu.domico downloaded successfully!`** が出ること
      （これが出ず `Downloading...` だけで終わるならトークン/Secret の問題。§2 のハマりどころ参照）
    - 末尾の `ls -la download/` に `base.apk` 系と `*config.ja*.apk` が並ぶこと
-4. 成功すると Release に **`domico-<version>-patch.apks`（1ファイル）** が添付される
+4. 成功すると Release に **`domico-<version>-patch.apk`（全スプリットをマージした 1 ファイル）** が添付される
 
 その後は `schedule`（毎日 00:00 UTC）で自動実行される。
 
 ### インストール
-Release の `domico-<version>-patch.apks` を取得し、**SAI / Shizuku 等の分割対応インストーラ**で
-この 1 ファイルを選んで入れる。日本語（`config.ja`）も同梱済み。
+Release の `domico-<version>-patch.apk` を取得し、通常の APK と同じように入れる（Obtainium も可）。
+日本語（`config.ja`）もマージ済み。
 詳細は [install.md](install.md)。
 
 ---
@@ -140,7 +140,7 @@ Release の `domico-<version>-patch.apks` を取得し、**SAI / Shizuku 等の�
 | `OUTPATH is not a valid directory` | 出力先ディレクトリが未作成 | `mkdir` してから実行 |
 | `unknown flag: --clobber`（Release 作成時） | `gh release create` は `--clobber` 非対応 | 既存 Release を `gh release delete` してから作成（現行ワークフローは対応済み） |
 | Actions で run が 0 秒失敗・手動実行ボタンが消える | ワークフロー YAML が無効（`run:` 内に生の複数行文字列等） | YAML を修正。複数行 notes は `--notes-file` で渡す（現行は対応済み） |
-| Xiaomi/HyperOS で `INSTALL_FAILED_USER_RESTRICTED` | resources.arsc 再構築を伴う apk | dex 差し替え＋`.apks` 同梱方式を使う（現行は対応済み）。[patch-notes.md](patch-notes.md) |
+| Xiaomi/HyperOS で `INSTALL_FAILED_USER_RESTRICTED` | resources.arsc 再構築を伴う apk | dex 差し替え方式を使う（現行は対応済み）。単一 `.apk`（マージ版）が弾かれる場合はローカルビルドの `work/out/splits` を `adb install-multiple` で入れる。[patch-notes.md](patch-notes.md) |
 
 ---
 

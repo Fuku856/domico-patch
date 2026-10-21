@@ -145,7 +145,7 @@ patch_smali.py  → PatchInfo.smali の VERSION フィールドを上書き
 
 | ワークフロー | チャンネル | 役割 |
 |--------------|-----------|------|
-| [`patch.yml`](../.github/workflows/patch.yml) | `release` | 公式更新を検知して本番 `.apks` をビルド・Release |
+| [`patch.yml`](../.github/workflows/patch.yml) | `release` | 公式更新を検知して本番 `.apk` をビルド・Release |
 | [`dev-prerelease.yml`](../.github/workflows/dev-prerelease.yml) | `dev` | dev のパッチを手動でプレリリース（bump あり or `force=true` 時のみビルド） |
 | [`release.yml`](../.github/workflows/release.yml) | — | main push 時に版算出 → CHANGELOG → `patch-v*` タグ + Release + APK 添付 |
 
@@ -157,7 +157,7 @@ patch_smali.py  → PatchInfo.smali の VERSION フィールドを上書き
 4. `CHANGELOG.md` を `chore(release): … [skip ci]` でコミットし、`patch-v{X.Y.Z}`
    タグを作成して push。
 5. GitHub Release を作成（CHANGELOG 当該節をノートに）。
-6. `build_apk` ジョブが公式最新版にパッチを当てた `.apks` をビルドし、`patch-v{X.Y.Z}`
+6. `build_apk` ジョブが公式最新版にパッチを当てた `.apk` をビルドし、`patch-v{X.Y.Z}`
    Release に添付する。
 
 > **`build_apk` の実行条件**: 通常は `bumped==1 && exists==false`（新規リリース確定時のみ）。
