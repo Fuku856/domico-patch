@@ -110,12 +110,13 @@ gh secret list
    - **Download latest Domico** ステップに **`jp.co.kyoritsu.domico downloaded successfully!`** が出ること
      （これが出ず `Downloading...` だけで終わるならトークン/Secret の問題。§2 のハマりどころ参照）
    - 末尾の `ls -la download/` に `base.apk` 系と `*config.ja*.apk` が並ぶこと
-4. 成功すると Release に **`domico-<version>-patch.apk`（全スプリットをマージした 1 ファイル）** が添付される
+4. 成功すると Release **`v<公式版>-<N>`** に **`domico-<公式版>-patch-v<パッチ版>.apk`（全スプリットをマージした 1 ファイル）** が添付される
+   （公式ミラーは Pre-release の `v<公式版>-0`。タグ体系は [patch-versioning.md](patch-versioning.md#タグ体系)）
 
 その後は `schedule`（毎日 00:00 UTC）で自動実行される。
 
 ### インストール
-Release の `domico-<version>-patch.apk` を取得し、通常の APK と同じように入れる（Obtainium も可）。
+Release の `domico-<公式版>-patch-v<パッチ版>.apk` を取得し、通常の APK と同じように入れる（Obtainium も可）。
 日本語（`config.ja`）もマージ済み。
 詳細は [install.md](install.md)。
 

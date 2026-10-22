@@ -1,10 +1,14 @@
 name: Release patch version (CHANGELOG + tag)
 
 # main への push を「パッチリリース」とみなし、Conventional Commits から
-# パッチ自身のセムバーを算出して patch-vX.Y.Z タグ + CHANGELOG + GitHub Release を
-# 自動生成する。バージョン番号の決定は scripts/version.py が SSOT。git-cliff は
-# CHANGELOG 本文の整形のみ担当する。
+# パッチ自身のセムバーを算出して patch-vX.Y.Z タグ + CHANGELOG を自動生成し、
+# 公式最新版にパッチを当てた APK を Release(v{公式版}-{N})として公開する。
+# バージョン番号の決定は scripts/version.py が SSOT。git-cliff は CHANGELOG 本文の
+# 整形のみ担当する。
 #
+# - patch-vX.Y.Z は version.py の基準になる git タグのみ(GitHub Release は作らない)。
+#   APK の Release は patch.yml と同じ v{公式版}-{N} 体系に揃え、Obtainium が
+#   1 系統だけを追えるようにする(docs/patch-versioning.md「タグ体系」)。
 # - リリース対象が無い(前回タグ以降に feat/fix 等が無い)場合は何もしない。
 # - CHANGELOG コミットは [skip ci] 付き & GITHUB_TOKEN push なので再帰実行しない。
 # - main がブランチ保護で bot push を拒否する場合は、保護設定で
@@ -16,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       attach_tag:
-        description: "既存の patch-vX.Y.Z タグを指定すると、bump 判定を飛ばして、そのタグのコードで公式最新版にパッチを当てた APK をビルドし、そのリリースへ添付する(バックフィル用)。空欄なら通常動作。"
+        description: "既存の patch-vX.Y.Z タグを指定すると、bump 判定を飛ばして、そのタグのコードで公式最新版にパッチを当てた APK をビルドし、v{公式版}-{N} の Release として公開する(再ビルド用)。空欄なら通常動作。"
         type: string
         default: ""
 
@@ -82,23 +86,8 @@ jobs:
           git push origin HEAD:main
           git push origin "patch-v$VER"
 
-      - name: Create GitHub Release
-        if: steps.ver.outputs.bumped == '1' && steps.ver.outputs.exists == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VER: ${{ steps.ver.outputs.version }}
-        run: |
-          # CHANGELOG 先頭の当該バージョン節だけ抜き出してリリースノートにする。
-          awk '/^## \[/{c++} c==1{print} c==2{exit}' CHANGELOG.md > RELEASE_NOTES.md
-          if [ ! -s RELEASE_NOTES.md ]; then
-            gh release create "patch-v$VER" --title "Domico Patch v$VER" --generate-notes
-          else
-            gh release create "patch-v$VER" --title "Domico Patch v$VER" --notes-file RELEASE_NOTES.md
-          fi
-
   # パッチ版が上がったとき、公式最新版にパッチを当てた APK をビルドして
-  # patch-vX.Y.Z リリースへ添付する。ビルド手順は patch.yml の build と同等
-  # (公式版基準の v{vn}-patch とは別軸: ここはパッチ版基準の成果物)。
+  # v{公式版}-{N} の Release として公開する。ビルド手順は patch.yml の build と同等。
   build_apk:
     needs: release
     # 通常: bump で新リリースを作ったとき。手動: attach_tag 指定でバックフィル。
@@ -238,19 +227,36 @@ jobs:
             --app-version "${{ steps.probe.outputs.vn }}" \
             --patch-version "v${{ steps.target.outputs.ver }} / base ${{ steps.probe.outputs.vn }}"
 
-      - name: Attach .apk to patch-v release
+      - name: Publish Release (v{公式版}-{N})
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.target.outputs.tag }}
           VER: ${{ steps.target.outputs.ver }}
           VN: ${{ steps.probe.outputs.vn }}
+          VC: ${{ steps.probe.outputs.vc }}
         run: |
-          # 再実行に備え --clobber で同名アセットを上書きする。アセット名には
-          # パッチ版と公式ベース版の両方を含め、どの組合せか分かるようにする。
-          OUT="domico-v${VER}-base${VN}-patch.apk"
-          cp "work/out/domico-${VN}-patch.apk" "$OUT"
-          gh release upload "$TAG" "$OUT" --clobber
-          echo "attached $OUT to $TAG"
+          # タグ・アセット名・タイトルは patch.yml と同じ形式。
+          # attach_tag で古いタグを checkout していると、その version.py には
+          # --build-number が無いので、ワークフロー実行元コミットの version.py を使う。
+          git show "${GITHUB_SHA}:scripts/version.py" > "$RUNNER_TEMP/version.py"
+          N=$(python3 "$RUNNER_TEMP/version.py" --build-number "$VER")
+          TAG="v${VN}-${N}"
+          OUT="domico-${VN}-patch-v${VER}.apk"
+          mv "work/out/domico-${VN}-patch.apk" "work/out/$OUT"
+          # 本文: base / patch version の1行 + CHANGELOG の当該バージョン節
+          # (checkout した ref の CHANGELOG.md 先頭節 = patch-v$VER の節)。
+          {
+            echo "Base Version: ${VN} (versionCode ${VC}) / Patch: v${VER}"
+            echo
+            awk '/^## \[/{c++} c==1{print} c==2{exit}' CHANGELOG.md
+          } > RELEASE_NOTES.md
+          # 再実行に備え、既存 Release があれば削除してから作り直す(タグは残る)。
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          # --latest: このタグ体系の最新ビルドを「Latest」にする。
+          gh release create "$TAG" "work/out/$OUT" \
+            --title "Domico v${VN} + Patch v${VER}" \
+            --notes-file RELEASE_NOTES.md \
+            --latest
+          echo "published $OUT as $TAG"
 
       - name: Cleanup secrets
         if: always()

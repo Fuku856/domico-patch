@@ -41,7 +41,8 @@ set "adb=%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe"
 
 [`.github/workflows/patch.yml`](../.github/workflows/patch.yml):
 - 毎日 公式更新を検知し、Google Play（`locale=ja_JP`）で取得する。
-- dex 差し替えパッチ + 再署名し、全スプリットを [APKEditor](https://github.com/REAndroid/APKEditor) で 1 つにマージした `domico-<version>-patch.apk` を Release に添付する。
+- dex 差し替えパッチ + 再署名し、全スプリットを [APKEditor](https://github.com/REAndroid/APKEditor) で 1 つにマージした `domico-<公式版>-patch-v<パッチ版>.apk` を Release（タグ `v<公式版>-<N>`）に添付する。
+- パッチ版が上がったとき（main マージ）は [`release.yml`](../.github/workflows/release.yml) が同じ形式の Release を作る。タグ体系は [patch-versioning.md](patch-versioning.md#タグ体系)。
 - `workflow_dispatch` で手動実行も可（`force=true` で同一版でも再ビルド）。
 
 ### 初期設定（Secrets / apkeep）
@@ -51,9 +52,15 @@ AAS トークンの取得手順・ハマりどころは **[ci-setup.md](ci-setup
 > 取得できる密度・ABI は apkeep の既定デバイスプロファイル依存。端末に完全一致させたい場合は A（端末 pull）を使う。
 
 ### 取得・インストール
-Releases の `domico-<version>-patch.apk`（分割APKを1つにマージした単一 APK）を取得し、通常の APK と同じように入れる。日本語（`config.ja`）もマージ済み。
-- Obtainium で追跡する場合は、APK フィルタ正規表現に `-patch\.apk$` を設定すると公式ミラー（`-official.apks`）を確実に除外できる。
-- adb で入れる場合は `adb install -r domico-<version>-patch.apk`。
+Releases の Latest にある `domico-<公式版>-patch-v<パッチ版>.apk`（分割APKを1つにマージした単一 APK）を取得し、通常の APK と同じように入れる。日本語（`config.ja`）もマージ済み。
+- adb で入れる場合は `adb install -r domico-<公式版>-patch-v<パッチ版>.apk`。
+
+### Obtainium で更新を追う
+1. Obtainium で「アプリを追加」→ このリポジトリの URL（`https://github.com/Fuku856/domico-patch`）を入れる。
+2. 追加設定は**既定のまま**でよい（「プレリリースを含める」は OFF のまま。公式ミラー `v<公式版>-0` と dev プレビューは Pre-release なので選ばれない）。
+3. 初回は「更新あり」と表示されるので、Obtainium からインストールする。以降は公式版の更新でもパッチ版の更新でも新しい Release が検知される。
+
+- 以前の形式（`v1.5.6-patch` / `patch-v0.x`）で登録していた場合は、Obtainium の設定に「バージョン検出 OFF」などが残っていることがあるので、一度**削除して追加し直す**。
 - 公式版とは署名が異なるため、初回は公式版のアンインストールが必要。
 
 ## 注意（ToS / 法務）
