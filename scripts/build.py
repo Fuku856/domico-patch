@@ -3,7 +3,7 @@
 Domico パッチ ビルドオーケストレータ（ローカル/CI 共通・クロスプラットフォーム）
 
 入力(XAPK/APKS/分割APKフォルダ) -> base 抽出 -> classes4.dex のみ差し替え(patch_apk.py)
--> 全 split を zipalign + 同一鍵で署名 -> 署名済み個別 .apk を出力。
+-> patch 済み base + 元 config split を APKEditor で 1 つの .apk にマージ -> zipalign + 署名。
 (apktool 全体リビルドは一部端末で Invalid apk になるため不使用)
 
 依存ツール（自動検出 + 環境変数/引数で上書き可）:
@@ -11,6 +11,7 @@ Domico パッチ ビルドオーケストレータ（ローカル/CI 共通・�
   - baksmali/smali : tools/baksmali.jar, tools/smali.jar (patch_apk.py が使用)
   - zipalign/apksigner : Android SDK build-tools
       --build-tools <dir> / $ANDROID_BUILD_TOOLS / $ANDROID_SDK_ROOT(最新build-tools自動選択)
+  - APKEditor   : tools/APKEditor.jar (split のマージ。--apkeditor / $APKEDITOR_JAR で上書き可)
 
 使用例(ローカル/Windows):
   python scripts/build.py --input Domico_1.5.4.xapk \
@@ -51,7 +52,7 @@ def run(cmd, **kw):
 def compute_patch_version(channel, app_version):
     """Conventional Commits からパッチ版表示文字列を組み立てる(version.py に委譲)。
 
-    例: release -> 'v0.3.0 / base v1.5.4' / dev -> 'v0.3.0-dev+g02322bf / base v1.5.4'
+    例: release -> 'v0.3.0 / base v1.5.4' / dev -> 'v0.4.0-dev.2+g02322bf / base v1.5.4'
     git 履歴やタグが読めない等で version.py 解決に失敗した場合のみ
     'domico-patch dev' にフォールバックする。
     """
@@ -152,10 +153,11 @@ def main():
     ap.add_argument("--key-pass")
     ap.add_argument("--alias", required=True)
     ap.add_argument("--min-sdk", default="26")
-    ap.add_argument("--app-version", help="versionName。.apks 同梱物の命名 + パッチ版表示の base に使用")
+    ap.add_argument("--apkeditor", help="APKEditor.jar のパス(既定: $APKEDITOR_JAR → tools/APKEditor.jar)")
+    ap.add_argument("--app-version", help="versionName。配布 .apk の命名 + パッチ版表示の base に使用")
     ap.add_argument("--patch-version", help="設定画面に表示するパッチ版。未指定なら Conventional Commits から自動算出。")
     ap.add_argument("--channel", choices=["release", "dev"], default="release",
-                    help="パッチ版の表示チャンネル。dev は -dev+g<sha> を付与。")
+                    help="パッチ版の表示チャンネル。dev は -dev.<N>+g<sha> を付与。")
     ap.add_argument("--install", action="store_true", help="adb install-multiple まで実行")
     args = ap.parse_args()
 
@@ -168,9 +170,14 @@ def main():
     zipalign = os.path.join(bt, "zipalign" + aexe)
     apksigner = os.path.join(bt, "apksigner" + ext)
     key_pass = args.key_pass or args.ks_pass
+    apkeditor = args.apkeditor or os.environ.get("APKEDITOR_JAR") or \
+        os.path.join(ROOT, "tools", "APKEditor.jar")
+    if not os.path.isfile(apkeditor):
+        raise SystemExit(f"APKEditor.jar not found: {apkeditor}")
 
     log(f"java={java}")
     log(f"build-tools={bt}")
+    log(f"apkeditor={apkeditor}")
 
     # 前回の残骸を除去（base が複数混ざる "Split null defined multiple times" 防止）
     extracted = os.path.join(args.workdir, "extracted")
@@ -197,49 +204,43 @@ def main():
          "--patch-version", patch_version,
          "--build-tools", bt])
 
-    # 署名対象: patch済 base + 元 config 群（全て同一鍵）
-    signed_paths = []
-    todo = [("base.apk", base_unsigned)] + [
-        (os.path.basename(c), c) for c in config_apks
-    ]
-    for name, src in todo:
-        aligned = os.path.join(args.out, "aligned_" + name)
-        signed = os.path.join(args.out, name)
-        run([zipalign, "-f", "-p", "4", src, aligned])
-        run([
-            apksigner, "sign", "--ks", args.keystore,
-            "--ks-pass", "pass:" + args.ks_pass,
-            "--key-pass", "pass:" + key_pass,
-            "--ks-key-alias", args.alias,
-            "--min-sdk-version", args.min_sdk,
-            "--out", signed, aligned,
-        ])
-        os.remove(aligned)
-        signed_paths.append(signed)
-    if os.path.exists(base_unsigned):
-        os.remove(base_unsigned)
+    # 配布物: patch 済み base + 元 config 群を APKEditor で 1 つの .apk にマージする。
+    # Obtainium 等の単一 APK 前提のインストーラで扱えるようにするため。
+    # 元 split の Play 署名は -clean-meta で除去し、マージ後に 1 回だけ署名する。
+    merge_in = os.path.join(args.workdir, "merge_in")
+    if os.path.isdir(merge_in):
+        shutil.rmtree(merge_in)
+    os.makedirs(merge_in)
+    shutil.move(base_unsigned, os.path.join(merge_in, "base.apk"))
+    for c in config_apks:
+        shutil.copy2(c, merge_in)
+    merged_unsigned = os.path.join(args.out, "merged.unsigned.apk")
+    run([java, "-jar", apkeditor, "m", "-i", merge_in, "-o", merged_unsigned,
+         "-clean-meta", "-f"])
+    shutil.rmtree(merge_in)
 
-    run([apksigner, "verify", "--min-sdk-version", args.min_sdk, signed_paths[0]])
-
-    # 個別 .apk はローカルの adb install-multiple 用に work/out へ残す。
-    log("signed splits: " + ", ".join(os.path.basename(p) for p in signed_paths))
-    log("install (adb): adb install-multiple --no-incremental -r " +
-        " ".join(os.path.basename(p) for p in signed_paths))
-
-    # 配布物: 全スプリットをバイト維持のまま 1 つの .apks(zip) に同梱する。
-    # resources.arsc を作り直さないので HyperOS 等の INSTALL_FAILED_USER_RESTRICTED を
-    # 回避できる。インストールは SAI / Shizuku 等の分割対応インストーラでこの 1 ファイルを選ぶ。
     ver = args.app_version.strip() if args.app_version else None
-    archive_name = f"domico-{ver}-patch.apks" if ver else "domico-patch.apks"
-    archive = os.path.join(args.out, archive_name)
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_STORED) as z:
-        for p in signed_paths:
-            z.write(p, os.path.basename(p))
-    log(f"bundled .apks: {archive_name} ({len(signed_paths)} splits)")
+    apk_name = f"domico-{ver}-patch.apk" if ver else "domico-patch.apk"
+    merged = os.path.join(args.out, apk_name)
+    aligned = os.path.join(args.out, "merged.aligned.apk")
+    run([zipalign, "-f", "-p", "4", merged_unsigned, aligned])
+    run([
+        apksigner, "sign", "--ks", args.keystore,
+        "--ks-pass", "pass:" + args.ks_pass,
+        "--key-pass", "pass:" + key_pass,
+        "--ks-key-alias", args.alias,
+        "--min-sdk-version", args.min_sdk,
+        "--out", merged, aligned,
+    ])
+    os.remove(aligned)
+    os.remove(merged_unsigned)
+    run([apksigner, "verify", "--min-sdk-version", args.min_sdk, merged])
+    log(f"merged .apk: {apk_name} ({1 + len(config_apks)} splits)")
+    log(f"install (adb): adb install -r {apk_name}")
 
     if args.install:
         adb = shutil.which("adb") or "adb"
-        run([adb, "install-multiple", "-r"] + signed_paths)
+        run([adb, "install", "-r", merged])
         log("installed via adb")
 
 
