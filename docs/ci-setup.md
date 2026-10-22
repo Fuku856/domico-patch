@@ -140,7 +140,6 @@ Release の `domico-<version>-patch.apk` を取得し、通常の APK と同じ�
 | `OUTPATH is not a valid directory` | 出力先ディレクトリが未作成 | `mkdir` してから実行 |
 | `unknown flag: --clobber`（Release 作成時） | `gh release create` は `--clobber` 非対応 | 既存 Release を `gh release delete` してから作成（現行ワークフローは対応済み） |
 | Actions で run が 0 秒失敗・手動実行ボタンが消える | ワークフロー YAML が無効（`run:` 内に生の複数行文字列等） | YAML を修正。複数行 notes は `--notes-file` で渡す（現行は対応済み） |
-| Xiaomi/HyperOS で `INSTALL_FAILED_USER_RESTRICTED` | resources.arsc 再構築を伴う apk | dex 差し替え方式を使う（現行は対応済み）。単一 `.apk`（マージ版）が弾かれる場合はローカルビルドの `work/out/splits` を `adb install-multiple` で入れる。[patch-notes.md](patch-notes.md) |
 
 ---
 

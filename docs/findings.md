@@ -100,7 +100,4 @@
 - **密度**: POCO F7 Pro は `xxxhdpi`。base に複数密度のフォールバックがあるため致命的ではないが、端末から pull するのが最も正確。
 - **インストール**: `adb install-multiple --no-incremental -r <全apk>` で成功。SAI は `.apks` 拡張子を弾くため、使うなら個別 apk。Shizuku 対応インストーラでも可。
 - **配布形式を単一 `.apk` に変更**: Obtainium が `.apks` を拾わないため、Release 添付物は APKEditor で
-  全スプリットをマージした単一 `.apk` にした（[build.py](../scripts/build.py)）。マージでは split 属性の除去等で
-  `resources.arsc` / `AndroidManifest` が作り直されるため、上記 apktool と同じく HyperOS で
-  `INSTALL_FAILED_USER_RESTRICTED` になる可能性がある（**実機未確認**）。弾かれた場合は
-  `work/out/splits` の個別 apk を `adb install-multiple` で入れる。
+  全スプリットをマージした単一 `.apk` にした（[build.py](../scripts/build.py)）。

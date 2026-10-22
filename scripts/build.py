@@ -3,7 +3,7 @@
 Domico パッチ ビルドオーケストレータ（ローカル/CI 共通・クロスプラットフォーム）
 
 入力(XAPK/APKS/分割APKフォルダ) -> base 抽出 -> classes4.dex のみ差し替え(patch_apk.py)
--> 全 split を zipalign + 同一鍵で署名 -> APKEditor で 1 つの .apk にマージして再署名。
+-> patch 済み base + 元 config split を APKEditor で 1 つの .apk にマージ -> zipalign + 署名。
 (apktool 全体リビルドは一部端末で Invalid apk になるため不使用)
 
 依存ツール（自動検出 + 環境変数/引数で上書き可）:
@@ -175,19 +175,6 @@ def main():
     if not os.path.isfile(apkeditor):
         raise SystemExit(f"APKEditor.jar not found: {apkeditor}")
 
-    def align_and_sign(src, signed):
-        aligned = signed + ".aligned"
-        run([zipalign, "-f", "-p", "4", src, aligned])
-        run([
-            apksigner, "sign", "--ks", args.keystore,
-            "--ks-pass", "pass:" + args.ks_pass,
-            "--key-pass", "pass:" + key_pass,
-            "--ks-key-alias", args.alias,
-            "--min-sdk-version", args.min_sdk,
-            "--out", signed, aligned,
-        ])
-        os.remove(aligned)
-
     log(f"java={java}")
     log(f"build-tools={bt}")
     log(f"apkeditor={apkeditor}")
@@ -197,10 +184,6 @@ def main():
     if os.path.isdir(extracted):
         shutil.rmtree(extracted)
     os.makedirs(args.out, exist_ok=True)
-    splits_dir = os.path.join(args.out, "splits")
-    if os.path.isdir(splits_dir):
-        shutil.rmtree(splits_dir)
-    os.makedirs(splits_dir)
     for old in glob.glob(os.path.join(args.out, "*.apk")) + \
                glob.glob(os.path.join(args.out, "*.idsig")) + \
                glob.glob(os.path.join(args.out, "*.apks")) + \
@@ -221,45 +204,43 @@ def main():
          "--patch-version", patch_version,
          "--build-tools", bt])
 
-    # 署名対象: patch済 base + 元 config 群（全て同一鍵）
-    signed_paths = []
-    todo = [("base.apk", base_unsigned)] + [
-        (os.path.basename(c), c) for c in config_apks
-    ]
-    for name, src in todo:
-        signed = os.path.join(splits_dir, name)
-        align_and_sign(src, signed)
-        signed_paths.append(signed)
-    if os.path.exists(base_unsigned):
-        os.remove(base_unsigned)
-
-    run([apksigner, "verify", "--min-sdk-version", args.min_sdk, signed_paths[0]])
-
-    # 個別 .apk はローカルの adb install-multiple 用に work/out/splits へ残す。
-    log("signed splits: " + ", ".join(os.path.basename(p) for p in signed_paths))
-    log("install (adb, splits): adb install-multiple --no-incremental -r " +
-        " ".join(os.path.relpath(p, args.out) for p in signed_paths))
-
-    # 配布物: 全スプリットを APKEditor で 1 つの .apk にマージして再署名する。
+    # 配布物: patch 済み base + 元 config 群を APKEditor で 1 つの .apk にマージする。
     # Obtainium 等の単一 APK 前提のインストーラで扱えるようにするため。
-    # マージでは resources.arsc / AndroidManifest が作り直される(split 属性の除去等)。
-    # HyperOS の INSTALL_FAILED_USER_RESTRICTED は apktool 再構築で起きた既知事例
-    # (docs/findings.md)なので、端末で弾かれる場合は work/out/splits を adb で入れる。
+    # 元 split の Play 署名は -clean-meta で除去し、マージ後に 1 回だけ署名する。
+    merge_in = os.path.join(args.workdir, "merge_in")
+    if os.path.isdir(merge_in):
+        shutil.rmtree(merge_in)
+    os.makedirs(merge_in)
+    shutil.move(base_unsigned, os.path.join(merge_in, "base.apk"))
+    for c in config_apks:
+        shutil.copy2(c, merge_in)
     merged_unsigned = os.path.join(args.out, "merged.unsigned.apk")
-    run([java, "-jar", apkeditor, "m", "-i", splits_dir, "-o", merged_unsigned,
+    run([java, "-jar", apkeditor, "m", "-i", merge_in, "-o", merged_unsigned,
          "-clean-meta", "-f"])
+    shutil.rmtree(merge_in)
 
     ver = args.app_version.strip() if args.app_version else None
     apk_name = f"domico-{ver}-patch.apk" if ver else "domico-patch.apk"
     merged = os.path.join(args.out, apk_name)
-    align_and_sign(merged_unsigned, merged)
+    aligned = os.path.join(args.out, "merged.aligned.apk")
+    run([zipalign, "-f", "-p", "4", merged_unsigned, aligned])
+    run([
+        apksigner, "sign", "--ks", args.keystore,
+        "--ks-pass", "pass:" + args.ks_pass,
+        "--key-pass", "pass:" + key_pass,
+        "--ks-key-alias", args.alias,
+        "--min-sdk-version", args.min_sdk,
+        "--out", merged, aligned,
+    ])
+    os.remove(aligned)
     os.remove(merged_unsigned)
     run([apksigner, "verify", "--min-sdk-version", args.min_sdk, merged])
-    log(f"merged .apk: {apk_name} ({len(signed_paths)} splits)")
+    log(f"merged .apk: {apk_name} ({1 + len(config_apks)} splits)")
+    log(f"install (adb): adb install -r {apk_name}")
 
     if args.install:
         adb = shutil.which("adb") or "adb"
-        run([adb, "install-multiple", "-r"] + signed_paths)
+        run([adb, "install", "-r", merged])
         log("installed via adb")
 
 
