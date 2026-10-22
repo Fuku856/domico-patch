@@ -99,3 +99,5 @@
 - **日本語**: 文言は base になく `config.ja` スプリット側にある。base の既定は英語。
 - **密度**: POCO F7 Pro は `xxxhdpi`。base に複数密度のフォールバックがあるため致命的ではないが、端末から pull するのが最も正確。
 - **インストール**: `adb install-multiple --no-incremental -r <全apk>` で成功。SAI は `.apks` 拡張子を弾くため、使うなら個別 apk。Shizuku 対応インストーラでも可。
+- **配布形式を単一 `.apk` に変更**: Obtainium が `.apks` を拾わないため、Release 添付物は APKEditor で
+  全スプリットをマージした単一 `.apk` にした（[build.py](../scripts/build.py)）。

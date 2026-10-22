@@ -199,6 +199,37 @@ class TagRegexTests(unittest.TestCase):
         self.assertIsNone(m.group(4))
 
 
+class BuildNumberTests(unittest.TestCase):
+    def test_encoding(self):
+        self.assertEqual(version.build_number((0, 10, 0)), 1000)
+        self.assertEqual(version.build_number((0, 9, 2)), 902)
+        self.assertEqual(version.build_number((1, 2, 3)), 10203)
+
+    def test_preserves_semver_order(self):
+        vs = [(0, 9, 2), (0, 9, 10), (0, 10, 0), (0, 10, 1), (1, 0, 0), (1, 99, 99), (2, 0, 0)]
+        nums = [version.build_number(v) for v in vs]
+        self.assertEqual(nums, sorted(nums))
+        self.assertEqual(len(set(nums)), len(nums))
+
+    def test_out_of_range_raises(self):
+        for v in ((0, 100, 0), (0, 0, 100), (-1, 0, 0)):
+            with self.subTest(v=v):
+                with self.assertRaises(ValueError):
+                    version.build_number(v)
+
+    def test_parse_version(self):
+        for s in ("0.10.0", "v0.10.0", "patch-v0.10.0", " 0.10.0\n"):
+            with self.subTest(s=s):
+                self.assertEqual(version.parse_version(s), (0, 10, 0))
+        with self.assertRaises(ValueError):
+            version.parse_version("0.10")
+
+    def test_base_follow_tags_not_patch_tags(self):
+        # Release タグ v{base}-{N} を version.py の基準タグと取り違えない。
+        self.assertIsNone(version._TAG_RE.match("v1.5.6-1000"))
+        self.assertIsNone(version._TAG_RE.match("v1.5.6-0"))
+
+
 class CliffTagPatternTests(unittest.TestCase):
     """cliff.toml の tag_pattern が version.py の _TAG_RE と同じ集合を選ぶか。
 
@@ -225,7 +256,7 @@ class CliffTagPatternTests(unittest.TestCase):
                 self.assertIsNone(self.pattern.search(t))
 
     def test_base_following_tags_are_not_boundaries(self):
-        for t in ("v1.5.4-patch", "v1.5.4-official", "v1.5.4-dev"):
+        for t in ("v1.5.4-patch", "v1.5.4-official", "v1.5.4-dev", "v1.5.6-1000", "v1.5.6-0"):
             with self.subTest(tag=t):
                 self.assertIsNone(self.pattern.search(t))
 
