@@ -151,13 +151,20 @@ jobs:
         if: steps.cache-smali.outputs.cache-hit != 'true'
         run: |
           mkdir -p tools
-          curl -L -o tools/baksmali.jar "$BAKSMALI_URL"
-          curl -L -o tools/smali.jar "$SMALI_URL"
-          curl -fL -o tools/APKEditor.jar "$APKEDITOR_URL"
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o tools/baksmali.jar "$BAKSMALI_URL"
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o tools/smali.jar "$SMALI_URL"
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o tools/APKEditor.jar "$APKEDITOR_URL"
 
       - name: Install apkeep (APK downloader)
         run: |
-          curl -L -o apkeep "https://github.com/EFForg/apkeep/releases/latest/download/apkeep-x86_64-unknown-linux-gnu"
+          # -f が無いと GitHub の 504 等のエラーページ(HTML)を apkeep として保存し、
+          # 次ステップで `syntax error near unexpected token '<'` になる(2026-11-09 #148)。
+          # 失敗は検出して再試行し、取得物が実行ファイル(ELF)かも確かめる。
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o apkeep "https://github.com/EFForg/apkeep/releases/latest/download/apkeep-x86_64-unknown-linux-gnu"
+          if ! file apkeep | grep -q ELF; then
+            echo "::error::apkeep のダウンロード結果が実行ファイルではありません: $(file -b apkeep)"
+            head -c 300 apkeep; exit 1
+          fi
           chmod +x apkeep
           sudo mv apkeep /usr/local/bin/apkeep
 
