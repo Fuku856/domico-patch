@@ -5,8 +5,9 @@ import android.app.Application;
 import android.os.Bundle;
 
 /**
- * 現在表示中の Activity を {@link PatchLoadingState} に伝えるだけのトラッカ。
- * 送信中の入力ガードを正しいウィンドウへ貼るために必要。
+ * 現在表示中の Activity を {@link PatchLoadingState} と {@link PatchDarkMode} に伝えるトラッカ。
+ * 送信中の入力ガードを正しいウィンドウへ貼るため、またダークモードを復帰時に
+ * 再適用するために必要。
  */
 public final class PatchActivityTracker implements Application.ActivityLifecycleCallbacks {
 
@@ -21,6 +22,7 @@ public final class PatchActivityTracker implements Application.ActivityLifecycle
     @Override
     public void onActivityResumed(Activity activity) {
         PatchLoadingState.setActivity(activity);
+        PatchDarkMode.onActivityResumed(activity);
     }
 
     @Override

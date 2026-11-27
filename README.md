@@ -37,6 +37,11 @@ OK で公式の `CheckInDialog` を開く（和食/洋食の正しい表示と�
 送信は公式と同一の `POST v1/reservations/checkin`（`reservation_id` のみ）で、独自通信は行わない。
 **裏機能のため既定オフ**。サーバーが時間窓を強制していれば時間外要求は弾かれる（詳細は patch-notes）。
 
+### 6. ダークモード（既定オフ）
+設定画面で「オフ / 端末設定に従う / 常にダーク」から選ぶ。公式はライトテーマ固定でリソースも変えられないため、
+Android 10+ の **Force Dark**（OS の自動ダーク）を各ウィンドウへ実行時に掛ける。再起動なしで即時反映。
+隠し API を使うため LSPosed の HiddenApiBypass（Apache-2.0）を同梱。WebView の中身（お知らせ本文など）は暗くならない。
+
 詳細:
 - 調査メモ: [docs/findings.md](docs/findings.md)
 - 差分メモ: [docs/patch-notes.md](docs/patch-notes.md)
@@ -57,6 +62,7 @@ OK で公式の `CheckInDialog` を開く（和食/洋食の正しい表示と�
 module/
   src/              # パッチ本体（Java）。javac→d8 で独立した classes5.dex になる
   stubs/            # コンパイル専用スタブ（dex には入らない／実行時は公式クラスを解決）
+  libs/             # 同梱ライブラリ jar（パッチ dex に一緒に入る。例: HiddenApiBypass）
 scripts/
   build_module.py   # module/ を単一 dex にビルド（版文字列も埋め込む）
   patch_smali.py    # 全パッチの smali 適用（冪等・アンカー基準・版ズレで失敗）

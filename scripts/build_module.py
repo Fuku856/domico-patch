@@ -9,6 +9,9 @@ patch_apk.py が公式 APK へ **追加** する(classes5.dex 等)。
 コンパイル用スタブ(module/stubs)は classpath にだけ載せ、d8 には渡さない。
 よって dex には入らず、実行時は公式 APK 内の本物のクラスが解決される。
 
+同梱ライブラリ(module/libs/*.jar)は classpath に載せたうえで d8 の入力にも渡し、
+パッチ本体と同じ dex に入れる(例: ダークモードが使う HiddenApiBypass)。
+
 依存ツール(自動検出 + 環境変数/引数で上書き可):
   - javac       : $JAVA_HOME/bin/javac もしくは PATH
   - android.jar : --android-jar / $ANDROID_SDK_ROOT/platforms/android-*/android.jar
@@ -36,6 +39,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODULE_DIR = os.path.join(ROOT, "module")
 SRC_DIR = os.path.join(MODULE_DIR, "src")
 STUB_DIR = os.path.join(MODULE_DIR, "stubs")
+LIBS_DIR = os.path.join(MODULE_DIR, "libs")
 
 # パッチ本体が想定する最低 API レベル。公式 APK の minSdkVersion と一致させる。
 MIN_API = 26
@@ -255,6 +259,12 @@ def main():
     else:
         log("stubs: なし (android.jar のみで足りるクラスだけ)")
 
+    # 同梱ライブラリ: javac の classpath と d8 の入力の両方に渡す
+    libs = sorted(glob.glob(os.path.join(LIBS_DIR, "*.jar")))
+    cp.extend(libs)
+    if libs:
+        log("libs: " + ", ".join(os.path.basename(p) for p in libs))
+
     # 2) パッチ本体をコンパイル
     srcs = java_sources(SRC_DIR, gen_dir)
     if not srcs:
@@ -272,7 +282,7 @@ def main():
     d8_cmd = [d8, "--release", "--min-api", str(MIN_API), "--lib", android_jar]
     if stub_srcs:
         d8_cmd += ["--classpath", stub_classes]
-    d8_cmd += ["--output", dex_dir, *classes]
+    d8_cmd += ["--output", dex_dir, *classes, *libs]
     run(d8_cmd)
 
     produced = sorted(glob.glob(os.path.join(dex_dir, "*.dex")))

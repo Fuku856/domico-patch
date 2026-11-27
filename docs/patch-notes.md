@@ -180,6 +180,37 @@
   失敗の理由（通信エラー / サーバー拒否）は区別できない。3 分以内に反映されなければ一律
   「確認できませんでした」になる。
 
+## 7. ダークモード（既定オフ・3択）
+- 対象: 新規 `module/src/.../patch/PatchDarkMode.java`。公式 smali への新規 trampoline は無し
+  （既存の `PatchInit.onAppCreate` と `PatchActivityTracker.onActivityResumed` から呼ぶだけ）。
+  設定は `PatchPrefs.darkMode`（int, キー `dark_mode`）: 0=オフ / 1=端末設定に従う / 2=常にダーク。
+- **方式**: 公式テーマは `Theme.AppCompat.Light` 系で `android:forceDarkAllowed` が無く、
+  resources は公式とバイト一致に保つ方針なのでテーマは変えられない。そこで
+  `ViewRootImpl#updateForceDarkMode()` が最後に行う
+  `mAttachInfo.mThreadedRenderer.setForceDark(...)` を各ウィンドウへ直接呼び、HWUI の
+  Force Dark（Android 10+ の自動ダーク）を掛ける。写真などのビットマップは反転されない。
+  - `HardwareRenderer#setForceDark` は API 29–34 が `(Z)Z`、API 35+ が `(I)Z`（`ForceDarkType.FORCE_DARK=1`）。実行時にどちらかを探す。
+  - android.jar の framework スタイルに `forceDarkAllowed=true` を持つものは無く、`Theme.applyStyle` で
+    テーマ属性だけ足す手は使えないことを確認済み。
+- **隠し API**: `setForceDark` と `View$AttachInfo#mThreadedRenderer` は `@UnsupportedAppUsage` の無い
+  blocklist 側。LSPosed の HiddenApiBypass 6.1（`module/libs/hiddenapibypass-6.1.jar`, Apache-2.0）で
+  `Landroid/view/` と `Landroid/graphics/HardwareRenderer;` だけを除外する。モードがオフの間は回避処理自体を走らせない。
+- **全ウィンドウの捕捉**: `WindowManagerGlobal#mRoots` を add() 監視付き `ArrayList` に差し替え、
+  追加された `ViewRootImpl` へメインスレッドで post して適用する（add 時点では renderer がまだ無いため）。
+  Activity・公式 Dialog（ログイントースト等）・PopupWindow・パッチ設定画面がまとめて対象になる。
+- **再適用**: `ViewRootImpl#updateConfiguration` は設定変更のたびに自前の判定で上書きするので、
+  `Application` の `onConfigurationChanged`（50ms 遅延）と `onActivityResumed` で再適用する。
+  オフに戻すときは `updateForceDarkMode()` を呼んで公式の判定へ戻す（開発者オプションの強制ダークも尊重される）。
+- **システムバー**: Force Dark はバーのアイコン色を変えないため、ダーク中は前面 Activity の
+  `APPEARANCE_LIGHT_STATUS_BARS / _NAVIGATION_BARS` を外し、オフ時に元の値へ戻す（API 30+）。
+- **クラッシュガード**: 回避処理の準備中は `dark_mode_guard=true` を同期保存し、終わったら false に戻す。
+  準備中にプロセスが落ちて true が残っていたら、次回起動時にモードをオフへ戻して起動ループを防ぐ。
+- **既知の制約**: Android 9 以下は非対応（何もしない）。お知らせ詳細などの WebView の中身は Force Dark が
+  効かず白いまま（第2段階で CSS 注入予定）。暗い単色 PNG アイコンが暗背景に沈む場合は個別に
+  `View#setForceDarkAllowed(false)` で除外する。
+- 実装前の見た目確認: 開発者向けオプション「フォースダークをオーバーライド」+ OS ダークテーマで、
+  ほぼ同じ見た目をコード無しで確認できる（公式テーマが `forceDarkAllowed` を明示していないため）。
+
 ## ビルド方式: dex 差し替え（apktool 全体リビルドは使わない）
 apktool で `resources.arsc` / `AndroidManifest.xml` を再エンコードすると、一部端末（Xiaomi/HyperOS 等）が `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾く。そこで **外科的 dex 差し替え** に変更した。
 

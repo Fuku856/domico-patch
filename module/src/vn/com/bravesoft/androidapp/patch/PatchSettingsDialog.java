@@ -21,6 +21,7 @@ import android.widget.TextView;
  *
  * <p>ヘッダはアプリのテーマ色(#FFDD00)のバーに「←」と「パッチ設定」。
  * 本体はパッチ1件につき1行(スイッチ + 名前 + 説明)で、行間に細い区切り線。
+ * ダークモードだけは3択なので、スイッチの代わりに現在値を出す選択行。
  * フッタにパッチ版とクレジット。物理バックキーは Dialog 既定で閉じる。
  */
 public final class PatchSettingsDialog {
@@ -52,6 +53,38 @@ public final class PatchSettingsDialog {
      */
     private static LinearLayout addRow(
             Context ctx, LinearLayout parent, String title, String desc, String key) {
+        // スイッチ: キーごとの既定値は PatchPrefs.defaultOf で決まる
+        Switch toggle = new Switch(ctx);
+        toggle.setChecked(PatchPrefs.get(ctx, key, PatchPrefs.defaultOf(key)));
+        toggle.setOnCheckedChangeListener(new PatchSwitchListener(ctx, key));
+        return addRow(ctx, parent, title, desc, toggle);
+    }
+
+    /**
+     * 3択などの選択行を追加する。右側に現在値を出し、行タップで選択ダイアログを開く。
+     * 見た目 (余白・文字・区切り線) はスイッチ行と同じ。
+     */
+    private static LinearLayout addDarkModeRow(Context ctx, LinearLayout parent) {
+        TextView value = new TextView(ctx);
+        value.setTextColor(COLOR_BLACK_WOOD);
+        value.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.0f);
+        value.setPadding(dp(ctx, 8), 0, 0, 0);
+        PatchDarkModeChoiceListener listener = new PatchDarkModeChoiceListener(ctx, value);
+        listener.refreshLabel();
+
+        LinearLayout row = addRow(ctx, parent,
+                "ダークモード",
+                "アプリの画面を自動で暗い配色にします。Android 10 以上。"
+                        + "一部の画像やお知らせ本文は暗くならないことがあります。（既定オフ）",
+                value);
+        row.setClickable(true);
+        row.setOnClickListener(listener);
+        return row;
+    }
+
+    /** 行の共通部分。{@code trailing} は右端に置く部品 (スイッチや現在値表示)。 */
+    private static LinearLayout addRow(
+            Context ctx, LinearLayout parent, String title, String desc, View trailing) {
         // 外枠: 横並び, 中央揃え, 16dp 均等パディング
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -76,13 +109,8 @@ public final class PatchSettingsDialog {
         description.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.0f);
         textColumn.addView(description);
 
-        // スイッチ: キーごとの既定値は PatchPrefs.defaultOf で決まる
-        Switch toggle = new Switch(ctx);
-        toggle.setChecked(PatchPrefs.get(ctx, key, PatchPrefs.defaultOf(key)));
-        toggle.setOnCheckedChangeListener(new PatchSwitchListener(ctx, key));
-
         row.addView(textColumn);
-        row.addView(toggle);
+        row.addView(trailing);
         parent.addView(row, new LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT));
 
         // 行区切り線 (1px, 左マージン 16dp)
@@ -165,6 +193,7 @@ public final class PatchSettingsDialog {
                 "テレメトリ送信をブロック",
                 "Firebase Analytics / Crashlytics / Performance と広告 ID の送信をブロック。（アプリ通知は維持）",
                 PatchPrefs.KEY_TELEMETRY);
+        addDarkModeRow(ctx, content);
         LinearLayout checkinRow = addRow(ctx, content,
                 "時間外チェックイン",
                 "受付時間外でもチェックインボタンを押せるようにし、確認後にチェックイン。（既定オフ）",
