@@ -198,11 +198,35 @@
 - **全ウィンドウの捕捉**: `WindowManagerGlobal#mRoots` を add() 監視付き `ArrayList` に差し替え、
   追加された `ViewRootImpl` へメインスレッドで post して適用する（add 時点では renderer がまだ無いため）。
   Activity・公式 Dialog（ログイントースト等）・PopupWindow・パッチ設定画面がまとめて対象になる。
-- **再適用**: `ViewRootImpl#updateConfiguration` は設定変更のたびに自前の判定で上書きするので、
-  `Application` の `onConfigurationChanged`（50ms 遅延）と `onActivityResumed` で再適用する。
+- **再適用**: `ViewRootImpl#updateConfiguration` は設定変更のたびに自前の判定で上書きする（Dialog・
+  ボトムシートは表示直後の構成変更で戻され、白いまま／しばらくして暗くなる症状が出た）。そこで
+  `mRoots.add()` の時点で `View$AttachInfo#mTreeObserver` に描画前リスナーを付け、毎フレーム
+  `setForceDark` を掛け直す（戻り値が「変化あり」のときだけ全 View を invalidate）。最初の描画より前に
+  付くので、ウィンドウは1フレーム目から暗い。`onConfigurationChanged` / `onActivityResumed` でも再適用する。
   オフに戻すときは `updateForceDarkMode()` を呼んで公式の判定へ戻す（開発者オプションの強制ダークも尊重される）。
+- **配色の補正**（`PatchDarkTint`）: Force Dark は背景を Lab 明度 `L -> 110-L` で反転するだけで、白と
+  薄いグレーが潰れて境目が消えたり、面ごとに違うグレーが混ざったりする。描画前に反転「前」の色を差し替える。
+  - 無彩色の明るい面は **黒 `#000000` / グレー `#1B1B1B` の2色** に揃える。画面の地は黒、ポップアップの地はグレー、
+    親と色の違う面（カード・行・ボタン）は親と逆の色、親と同色や画面の大半を覆う面は親と同じ色。
+    グレーは Force Dark が白を変換した色と同じなので、補正できない白い部品とも揃う。
+  - 有彩色の明るい面（薄いオレンジの見出し等）は Force Dark 任せ。Lab 彩度 35 以上の鮮やかな背景
+    （テーマ色ボタン・色見本）は `setForceDarkAllowed(false)` で元の色のまま。
+  - `GradientDrawable` の明るい枠線は明度 60 で頭打ちにし、反転後に中間グレーで見えるようにする
+    （`mGradientState` の枠線フィールドを読むため `Landroid/graphics/drawable/` も隠し API の除外対象）。
+  - 色の判定は色ごとに1回だけ計算してキャッシュ。実機（120Hz）で1フレームあたり平均 0.18ms・最大 0.85ms（View 112個）。
+    デバッグ版（パッケージ名 `.debug`）だけ約10秒ごとに `PatchDarkTint stats:` を Warn で出す。
+  - 書き換えた Drawable は元の値を覚えておき、ダークをやめたら戻す。
+- **ロゴ画像**: ホームの `ic_domico_home`・起動画面の `ic_splash` は黄色を保って黒文字だけ明るくする色行列、
+  `ic_logo_kyoritsu_splash` は黒文字→明るいグレー・青→明るい青・桃色はそのままの色行列を掛ける。
+  Activity ごとに Resources（画像キャッシュ）が別なので、その View 自身の Resources で読んだ画像と比べて判定する。
+- **ライト固定の画面**: 食堂で係の人に見せる `CheckInCompletedDialog` は、ダーク中も公式どおりライトで描く
+  （`FragmentManager.findFragment` でウィンドウ中身の DialogFragment を判定）。
+- **起動直後の画面**: OS が出すスプラッシュはアプリのコードより先に manifest のテーマ（白地）で描かれる。
+  Android 13+ の `SplashScreen#setSplashScreenTheme` で、次回起動からフレームワーク標準の
+  `Theme.Black.NoTitleBar` を使うよう切り替える（ダークをやめたら既定へ戻す）。
 - **システムバー**: Force Dark はバーのアイコン色を変えないため、ダーク中は前面 Activity の
   `APPEARANCE_LIGHT_STATUS_BARS / _NAVIGATION_BARS` を外し、オフ時に元の値へ戻す（API 30+）。
+  アプリが後から黒アイコン指定をし直すので、これも毎フレーム確認して外す。
 - **クラッシュガード**: 回避処理の準備中は `dark_mode_guard=true` を同期保存し、終わったら false に戻す。
   準備中にプロセスが落ちて true が残っていたら、次回起動時にモードをオフへ戻して起動ループを防ぐ。
 - **既知の制約**: Android 9 以下は非対応（何もしない）。お知らせ詳細などの WebView の中身は Force Dark が
