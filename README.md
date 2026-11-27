@@ -74,8 +74,8 @@ scripts/
   setup-signing.{ps1,sh} # 署名鍵作成 + GitHub Secrets 登録（ワンショット）
   gen-keystore.{sh,ps1}  # 署名鍵生成のみ
 .github/workflows/
-  patch.yml          # 公式更新検知→Google Play(ja)取得→dexパッチ→再署名→Release(.apk添付)
-  release.yml        # main push 時にパッチ版確定→CHANGELOG→patch-v* タグ+Release+APK添付
+  patch.yml          # 公式更新検知→Google Play(ja)取得→dexパッチ→再署名→Release v{公式版}-{N}(.apk添付)
+  release.yml        # main push 時にパッチ版確定→CHANGELOG→patch-v* タグ→Release v{公式版}-{N}(.apk添付)
   dev-prerelease.yml # 手動実行・プレリリース作成（dev テスト用）
 docs/               # 調査/差分/手順
 ```
@@ -88,7 +88,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup-signing.ps1
 powershell -ExecutionPolicy Bypass -File scripts/pull-splits.ps1
 # dex差し替えパッチ＋再署名
 python scripts/build.py --input work/device_splits --keystore work/domico.keystore --ks-pass <pass> --alias domico
-# 出力: work/out/*.apk → adb install-multiple --no-incremental -r work\out\*.apk
+# 出力: work/out/domico-patch.apk → adb install -r work\out\domico-patch.apk
 ```
 
 **デバッグ版（別パッケージ）**: `--package jp.co.kyoritsu.domico.debug` を付けると、パッケージ名・provider authority・独自 permission を差し替え、アプリ名を「Domico (debug)」にした別アプリとしてビルドする。公式版・通常パッチ版と並べて入れられるため、署名鍵も Android のデバッグ鍵で足りる。
@@ -101,5 +101,5 @@ python scripts/build.py --input work/device_splits --out work/out-debugpkg --app
 
 ## 注意
 - 再署名版は公式と署名が異なるため、初回は公式版のアンインストールが必要（データはサーバ側）。
-- Play 自動更新の対象外。更新は GitHub Release から取得。
+- Play 自動更新の対象外。更新は GitHub Release から取得（[Obtainium](docs/install.md#obtainium-で更新を追う) で自動検知できる）。
 - 私的・学習目的の UX 改善パッチ。サーバ通信・本来機能は変更なし。ミラー取得は配布元 ToS 上グレーで自己責任。

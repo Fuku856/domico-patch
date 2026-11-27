@@ -2,8 +2,8 @@
 """
 パッチ自身のセムバーを Conventional Commits から自動算出する。
 
-このプロジェクトの GitHub リリース(v{ベース版}-patch)は「公式 Domico の更新追従」
-であり、パッチ自身のバージョンとは別軸。そこでパッチ版は git 履歴から独立に算出する:
+APK を配る GitHub リリース(v{ベース版}-{N})は「公式 Domico の版 + パッチ版」の組であり、
+パッチ自身のバージョンとは別軸。そこでパッチ版は git 履歴から独立に算出する:
 
   - 基準(baseline): `patch-v{X.Y.Z}` タグのうち最大セムバー(無ければ 0.0.0)。
       dev プレリリースのタグ(`patch-v{X.Y.Z}-dev.{N}`)は `_TAG_RE` が弾くため
@@ -23,6 +23,9 @@
       とセムバーのプレリリース順序が保たれ、本リリースは必ず 0.6.0 に収束する。
       「dev ビルドごとに別タグを残す」要件は版番号ではなくこの連番が担う。
   - 表示(display): `v{X.Y.Z}[-dev.{N}+g{sha}[.dirty]][ / base v{app}]`
+  - ビルド番号(build number): Release タグ `v{ベース版}-{N}` の N。
+      N = major*10000 + minor*100 + patch(0.10.0 -> 1000)。Obtainium は
+      `X.Y.Z-整数` の整数部を数値比較するので、同じベース版でもパッチ版順に並ぶ。
 
 bump はコミット本数ではなく最高レベル 1 回なので、dev->main のマージを squash しても
 最終的な版はずれない(squash 後のメッセージに `feat:`/`fix:` 等の種別が残っていればよい)。
@@ -36,6 +39,8 @@ CLI:
   python scripts/version.py --app-version 1.5.4      -> ` / base v1.5.4` を付与
   python scripts/version.py --number-only            -> `X.Y.Z` のみ(タグ/CHANGELOG 用)
   python scripts/version.py --dev-seq                -> dev プレリリース連番 N のみ
+  python scripts/version.py --build-number [X.Y.Z]   -> Release タグ用ビルド番号 N のみ
+                                                        (省略時は次版)
 """
 import argparse
 import os
@@ -182,6 +187,25 @@ def dev_seq(version):
     return best + 1
 
 
+def build_number(version):
+    """パッチ版 (M,m,p) を Release タグ `v{ベース版}-{N}` 用の整数 N にする。
+
+    m / p が 100 以上だと桁が衝突して順序が壊れるため ValueError にする。
+    """
+    M, m, p = version
+    if not (0 <= m < 100 and 0 <= p < 100) or M < 0:
+        raise ValueError(f"build number の範囲外: {vstr(version)}")
+    return M * 10000 + m * 100 + p
+
+
+def parse_version(s):
+    """`X.Y.Z`(先頭 v / patch-v 可)を (M,m,p) にする。"""
+    m = re.fullmatch(r"(?:patch-)?v?(\d+)\.(\d+)\.(\d+)", s.strip())
+    if not m:
+        raise ValueError(f"X.Y.Z 形式ではない: {s}")
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
 def short_sha():
     return (_git(["rev-parse", "--short=8", "HEAD"], default="") or "").strip() or "0000000"
 
@@ -222,7 +246,14 @@ def main():
                     help="基準タグから増分があれば 1、無ければ 0 を最後に出力")
     ap.add_argument("--dev-seq", action="store_true",
                     help="次版に対する dev プレリリース連番 N のみ出力")
+    ap.add_argument("--build-number", nargs="?", const="", metavar="X.Y.Z",
+                    help="Release タグ v{ベース版}-{N} 用のビルド番号 N のみ出力(省略時は次版)")
     args = ap.parse_args()
+
+    if args.build_number is not None:
+        v = parse_version(args.build_number) if args.build_number else next_version()["version"]
+        sys.stdout.write(str(build_number(v)) + "\n")
+        return
 
     if args.dev_seq:
         sys.stdout.write(str(dev_seq(next_version()["version"])) + "\n")

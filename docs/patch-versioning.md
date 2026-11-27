@@ -35,7 +35,7 @@ v0.3.0 / base v1.5.4
 
 | チャンネル | 形式 | 例 | 用途 |
 |-----------|------|----|------|
-| `release` | `v{X.Y.Z} / base v{app}` | `v0.3.0 / base v1.5.4` | 本番ビルド（`patch.yml`） |
+| `release` | `v{X.Y.Z} / base v{app}` | `v0.3.0 / base v1.5.4` | 本番ビルド（`patch.yml` / `release.yml`） |
 | `dev` | `v{X.Y.Z}-dev.{N}+g{sha}[.dirty] / base v{app}` | `v0.4.0-dev.2+g7afd66a2 / base v1.5.4` | dev プレリリース（`dev-prerelease.yml`） |
 
 - `-dev.{N}`: セムバーの**プレリリース識別子**。同じ次版に対する dev ビルドの連番。
@@ -101,15 +101,33 @@ dev 側のビルド回数が本番の版を汚すこともない。
 
 ## タグ体系
 
-| タグ | 例 | 何を表すか | 誰が打つか |
-|------|----|-----------|-----------|
-| `patch-v{X.Y.Z}` | `patch-v0.3.0` | **パッチ版**の確定（CHANGELOG 境界） | `release.yml`（main push 時） |
-| `v{versionName}-patch` | `v1.5.4-patch` | **ベース追従**ビルドの Release | `patch.yml`（公式更新検知時） |
-| `patch-v{X.Y.Z}-dev.{N}` | `patch-v0.6.0-dev.2` | dev プレリリース（パッチ版 X.Y.Z の検証）| `dev-prerelease.yml` |
+| タグ | 例 | 何を表すか | Release | 誰が打つか |
+|------|----|-----------|---------|-----------|
+| `v{versionName}-{N}` | `v1.5.6-1000` | **配布ビルド**（公式版 + パッチ版の組）。Obtainium が追うのはこれだけ | APK 付き・Latest | `patch.yml`（公式更新時）/ `release.yml`（パッチ版更新時） |
+| `v{versionName}-0` | `v1.5.6-0` | 公式ミラー（未加工・公式署名） | Pre-release | `patch.yml` |
+| `patch-v{X.Y.Z}` | `patch-v0.10.0` | **パッチ版**の確定（CHANGELOG 境界） | 作らない（git タグのみ） | `release.yml`（main push 時） |
+| `patch-v{X.Y.Z}-dev.{N}` | `patch-v0.6.0-dev.2` | dev プレリリース（パッチ版 X.Y.Z の検証）| Pre-release | `dev-prerelease.yml` |
+
+`N` はパッチ版のビルド番号 `major*10000 + minor*100 + patch`（`0.10.0` → `1000`、
+`version.py --build-number`）。公式版とパッチ版のどちらが上がっても別タグになり、
+CHANGELOG はそのビルドの Release 本文に入る。
 
 `version.py` と `cliff.toml` はバージョン境界として **`patch-v{X.Y.Z}` のみ**を見る
-（ベース追従タグと dev プレリリースタグは無視する）。どちらも
+（配布ビルド・公式ミラー・dev プレリリースのタグは無視する）。どちらも
 `^patch-v[0-9]+\.[0-9]+\.[0-9]+$` の完全一致で判定する。
+
+### Obtainium との関係
+タグをこの形にしているのは、Obtainium（1.7.x で確認）の既定設定で更新を正しく検知させるため。
+
+- **先頭の `v{versionName}`**: インストール済み APK の versionName は公式と同じ（例 `1.5.6`）。
+  Obtainium はタグ中で最初に出てくる `X.Y.Z` をこれと照合するので、ここが一致していないと
+  「更新あり」が出続けたり（旧 `patch-v0.9.2`）、一度も出なかったりする。
+- **`-{N}` が 1 つの整数**: Obtainium は `X.Y.Z-整数` を数値で比べて並べるので、同じ公式版でも
+  パッチ版順に並ぶ。`v1.5.6-0.10.0` のような形だと同点になり、古い Release が選ばれる。
+- **公式ミラーは `-0` + Pre-release**: 同じ公式版のパッチ版より必ず下に並び、かつ Obtainium の
+  既定（Pre-release を無視）で選ばれない。パッチが当たらない新公式版が出ても、未パッチ版は掴まない。
+- 旧形式 `v1.5.6-patch` / `v1.5.6-official` は同じ公式版の新タグと同点になり、古い方が選ばれるため
+  Release を削除した（1.5.4 系と `patch-v0.x` は新タグより必ず下に並ぶので残している）。
 
 > 旧 `cliff.toml` の `tag_pattern = "patch-v[0-9]*"` は、git-cliff 2.x では
 > glob ではなく**部分一致の正規表現**として解釈されるため `patch-v0.6.0-dev` にも
@@ -145,9 +163,9 @@ patch_smali.py  → PatchInfo.smali の VERSION フィールドを上書き
 
 | ワークフロー | チャンネル | 役割 |
 |--------------|-----------|------|
-| [`patch.yml`](../.github/workflows/patch.yml) | `release` | 公式更新を検知して本番 `.apks` をビルド・Release |
+| [`patch.yml`](../.github/workflows/patch.yml) | `release` | 公式更新を検知して本番 `.apk` をビルドし `v{公式版}-{N}` で Release。公式ミラー `v{公式版}-0` も作る |
 | [`dev-prerelease.yml`](../.github/workflows/dev-prerelease.yml) | `dev` | dev のパッチを手動でプレリリース（bump あり or `force=true` 時のみビルド） |
-| [`release.yml`](../.github/workflows/release.yml) | — | main push 時に版算出 → CHANGELOG → `patch-v*` タグ + Release + APK 添付 |
+| [`release.yml`](../.github/workflows/release.yml) | — | main push 時に版算出 → CHANGELOG → `patch-v*` タグ → APK を `v{公式版}-{N}` で Release |
 
 `release.yml` の動作：
 
@@ -156,12 +174,11 @@ patch_smali.py  → PatchInfo.smali の VERSION フィールドを上書き
 3. git-cliff で `CHANGELOG.md` を生成。
 4. `CHANGELOG.md` を `chore(release): … [skip ci]` でコミットし、`patch-v{X.Y.Z}`
    タグを作成して push。
-5. GitHub Release を作成（CHANGELOG 当該節をノートに）。
-6. `build_apk` ジョブが公式最新版にパッチを当てた `.apks` をビルドし、`patch-v{X.Y.Z}`
-   Release に添付する。
+5. `build_apk` ジョブが公式最新版にパッチを当てた `.apk` をビルドし、
+   `v{公式版}-{N}` の Release として公開する（CHANGELOG 当該節を本文に）。
 
 > **`build_apk` の実行条件**: 通常は `bumped==1 && exists==false`（新規リリース確定時のみ）。
-> `workflow_dispatch` で既存の `patch-vX.Y.Z` タグを指定することでバックフィルも可能。
+> `workflow_dispatch` で既存の `patch-vX.Y.Z` タグを指定すれば、そのタグのコードで再ビルドもできる。
 > `docs:`/`ci:`/`chore:` のみのコミットは `bumped==0` になり、このジョブもスキップされる。
 
 > **重要**: いずれのワークフローも checkout は `fetch-depth: 0` + `fetch-tags`。
@@ -200,6 +217,7 @@ python scripts/version.py                              # release 表示
 python scripts/version.py --channel dev --app-version 1.5.4
 python scripts/version.py --number-only --print-bumped # 次版 + 増分有無(1/0)
 python scripts/version.py --dev-seq                    # 次の dev プレリリース連番 N
+python scripts/version.py --build-number 0.10.0        # Release タグ v{公式版}-{N} の N (1000)
 ```
 
 ---
