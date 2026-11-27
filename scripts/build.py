@@ -159,6 +159,10 @@ def main():
     ap.add_argument("--channel", choices=["release", "dev"], default="release",
                     help="パッチ版の表示チャンネル。dev は -dev.<N>+g<sha> を付与。")
     ap.add_argument("--install", action="store_true", help="adb install-multiple まで実行")
+    ap.add_argument("--package",
+                    help="デバッグ用: パッケージ名を差し替える(例: jp.co.kyoritsu.domico.debug)。"
+                         "公式版・通常パッチ版と別アプリとして並べて入れられる")
+    ap.add_argument("--label", help="--package 時のアプリ名(既定: Domico (debug))")
     args = ap.parse_args()
 
     patch_version = args.patch_version or compute_patch_version(args.channel, args.app_version)
@@ -199,10 +203,25 @@ def main():
     log(f"patch-version={patch_version}")
     # build-tools は既に解決済みなので patch_apk 経由で build_module.py へ渡す
     # (パッチ本体の Java を d8 で dex 化するのに d8 が要る)。
-    run([sys.executable, os.path.join(ROOT, "scripts", "patch_apk.py"),
-         "--in", base_apk, "--out", base_unsigned,
-         "--patch-version", patch_version,
-         "--build-tools", bt])
+    patch_cmd = [sys.executable, os.path.join(ROOT, "scripts", "patch_apk.py"),
+                 "--in", base_apk, "--out", base_unsigned,
+                 "--patch-version", patch_version,
+                 "--build-tools", bt]
+    if args.package:
+        patch_cmd += ["--package", args.package, "--label", args.label or "Domico (debug)"]
+    run(patch_cmd)
+
+    # split の manifest も package を持つため、base と揃えて改名する。
+    renamed = []
+    if args.package:
+        from rename_package import rename_apk
+        new_configs = []
+        for c in config_apks:
+            dst = os.path.join(args.out, "renamed_" + os.path.basename(c))
+            rename_apk(c, dst, "jp.co.kyoritsu.domico", args.package)
+            new_configs.append(dst)
+            renamed.append(dst)
+        config_apks = new_configs
 
     # 配布物: patch 済み base + 元 config 群を APKEditor で 1 つの .apk にマージする。
     # Obtainium 等の単一 APK 前提のインストーラで扱えるようにするため。
@@ -218,9 +237,12 @@ def main():
     run([java, "-jar", apkeditor, "m", "-i", merge_in, "-o", merged_unsigned,
          "-clean-meta", "-f"])
     shutil.rmtree(merge_in)
+    for r in renamed:
+        os.remove(r)
 
     ver = args.app_version.strip() if args.app_version else None
-    apk_name = f"domico-{ver}-patch.apk" if ver else "domico-patch.apk"
+    suffix = "-debugpkg" if args.package else ""
+    apk_name = f"domico-{ver}-patch{suffix}.apk" if ver else f"domico-patch{suffix}.apk"
     merged = os.path.join(args.out, apk_name)
     aligned = os.path.join(args.out, "merged.aligned.apk")
     run([zipalign, "-f", "-p", "4", merged_unsigned, aligned])
@@ -239,7 +261,13 @@ def main():
     log(f"install (adb): adb install -r {apk_name}")
 
     if args.install:
-        adb = shutil.which("adb") or "adb"
+        adb = shutil.which("adb")
+        if not adb:
+            # PATH に無ければ SDK 同梱の platform-tools を探す
+            sdk = (os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME")
+                   or os.path.join(os.environ.get("LOCALAPPDATA", ""), "Android", "Sdk"))
+            cand = os.path.join(sdk, "platform-tools", "adb" + aexe)
+            adb = cand if os.path.isfile(cand) else "adb"
         run([adb, "install", "-r", merged])
         log("installed via adb")
 

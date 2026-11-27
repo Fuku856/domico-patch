@@ -29,6 +29,9 @@ import subprocess
 import sys
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rename_package import rename_manifest  # noqa: E402
+
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8")
@@ -108,6 +111,39 @@ def build_module_dex(out_path, patch_version, build_tools, android_jar, work):
     return open(out_path, "rb").read()
 
 
+ORIG_PACKAGE = "jp.co.kyoritsu.domico"
+
+
+def rename_code_authorities(work, new_pkg):
+    """--package 用: コード内に直書きされた FileProvider authority を新パッケージに合わせる。
+
+    公式は BaseFragment#prepareCamera で "jp.co.kyoritsu.domico.provider" を
+    const-string で持っており、manifest 側だけ改名すると getUriForFile が
+    IllegalArgumentException で落ちる。書き換えた shard 名の集合を返す。
+    """
+    old_lit = f'"{ORIG_PACKAGE}.provider"'
+    new_lit = f'"{new_pkg}.provider"'
+    shards = set()
+    for shard in os.listdir(work):
+        sdir = os.path.join(work, shard)
+        if not (os.path.isdir(sdir) and re.match(r"smali(_classes\d+)?$", shard)):
+            continue
+        for dirpath, _, files in os.walk(sdir):
+            for fn in files:
+                if not fn.endswith(".smali"):
+                    continue
+                fp = os.path.join(dirpath, fn)
+                with open(fp, encoding="utf-8") as f:
+                    src = f.read()
+                if old_lit not in src:
+                    continue
+                with open(fp, "w", encoding="utf-8", newline="") as f:
+                    f.write(src.replace(old_lit, new_lit))
+                log(f"rename: {shard}/{os.path.relpath(fp, sdir)} の {old_lit} -> {new_lit}")
+                shards.add(shard)
+    return shards
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", required=True)
@@ -134,6 +170,11 @@ def main():
         "--android-jar",
         help="コンパイルに使う android.jar のパス(build_module.py へ委譲)。",
     )
+    ap.add_argument(
+        "--package",
+        help="デバッグ用: パッケージ名をこの値に差し替える(manifest + コード内の FileProvider authority)。",
+    )
+    ap.add_argument("--label", help="--package 時のアプリ名(ランチャー表示)。")
     args = ap.parse_args()
     if not args.check and not args.out:
         ap.error("--out is required unless --check")
@@ -195,6 +236,8 @@ def main():
     if os.path.isfile(changed_out):
         with open(changed_out, encoding="utf-8") as f:
             changed_shards = {ln.strip() for ln in f if ln.strip()}
+    if args.package:
+        changed_shards |= rename_code_authorities(work, args.package)
     log(f"changed shards = {sorted(changed_shards) or '(none)'}")
 
     new_dex_bytes_map = {}
@@ -247,6 +290,10 @@ def main():
                 data = new_dex_bytes_map[item.filename]
             else:
                 data = zin.read(item.filename)
+            if args.package and item.filename == "AndroidManifest.xml":
+                data, changed = rename_manifest(data, ORIG_PACKAGE, args.package, args.label)
+                for c in changed:
+                    log(f"rename: {c}")
             zi = zipfile.ZipInfo(item.filename, date_time=item.date_time)
             zi.compress_type = item.compress_type
             zi.external_attr = item.external_attr

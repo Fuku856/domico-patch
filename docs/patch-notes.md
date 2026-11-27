@@ -180,6 +180,61 @@
   失敗の理由（通信エラー / サーバー拒否）は区別できない。3 分以内に反映されなければ一律
   「確認できませんでした」になる。
 
+## 7. ダークモード（既定オフ・3択）
+- 対象: 新規 `module/src/.../patch/PatchDarkMode.java`。公式 smali への新規 trampoline は無し
+  （既存の `PatchInit.onAppCreate` と `PatchActivityTracker.onActivityResumed` から呼ぶだけ）。
+  設定は `PatchPrefs.darkMode`（int, キー `dark_mode`）: 0=オフ / 1=端末設定に従う / 2=常にダーク。
+- **方式**: 公式テーマは `Theme.AppCompat.Light` 系で `android:forceDarkAllowed` が無く、
+  resources は公式とバイト一致に保つ方針なのでテーマは変えられない。そこで
+  `ViewRootImpl#updateForceDarkMode()` が最後に行う
+  `mAttachInfo.mThreadedRenderer.setForceDark(...)` を各ウィンドウへ直接呼び、HWUI の
+  Force Dark（Android 10+ の自動ダーク）を掛ける。写真などのビットマップは反転されない。
+  - `HardwareRenderer#setForceDark` は API 29–34 が `(Z)Z`、API 35+ が `(I)Z`（`ForceDarkType.FORCE_DARK=1`）。実行時にどちらかを探す。
+  - android.jar の framework スタイルに `forceDarkAllowed=true` を持つものは無く、`Theme.applyStyle` で
+    テーマ属性だけ足す手は使えないことを確認済み。
+- **隠し API**: `setForceDark` と `View$AttachInfo#mThreadedRenderer` は `@UnsupportedAppUsage` の無い
+  blocklist 側。LSPosed の HiddenApiBypass 6.1（`module/libs/hiddenapibypass-6.1.jar`, Apache-2.0）で
+  `Landroid/view/` と `Landroid/graphics/HardwareRenderer;` だけを除外する。モードがオフの間は回避処理自体を走らせない。
+- **全ウィンドウの捕捉**: `WindowManagerGlobal#mRoots` を add() 監視付き `ArrayList` に差し替え、
+  追加された `ViewRootImpl` へメインスレッドで post して適用する（add 時点では renderer がまだ無いため）。
+  Activity・公式 Dialog（ログイントースト等）・PopupWindow・パッチ設定画面がまとめて対象になる。
+- **再適用**: `ViewRootImpl#updateConfiguration` は設定変更のたびに自前の判定で上書きする（Dialog・
+  ボトムシートは表示直後の構成変更で戻され、白いまま／しばらくして暗くなる症状が出た）。そこで
+  `mRoots.add()` の時点で `View$AttachInfo#mTreeObserver` に描画前リスナーを付け、毎フレーム
+  `setForceDark` を掛け直す（戻り値が「変化あり」のときだけ全 View を invalidate）。最初の描画より前に
+  付くので、ウィンドウは1フレーム目から暗い。`onConfigurationChanged` / `onActivityResumed` でも再適用する。
+  オフに戻すときは `updateForceDarkMode()` を呼んで公式の判定へ戻す（開発者オプションの強制ダークも尊重される）。
+- **配色の補正**（`PatchDarkTint`）: Force Dark は背景を Lab 明度 `L -> 110-L` で反転するだけで、白と
+  薄いグレーが潰れて境目が消えたり、面ごとに違うグレーが混ざったりする。描画前に反転「前」の色を差し替える。
+  - 無彩色の明るい面は **黒 `#000000` / グレー `#1B1B1B` の2色** に揃える。画面の地は黒、ポップアップの地はグレー、
+    親と色の違う面（カード・行・ボタン）は親と逆の色、親と同色や画面の大半を覆う面は親と同じ色。
+    グレーは Force Dark が白を変換した色と同じなので、補正できない白い部品とも揃う。
+  - 有彩色の明るい面（薄いオレンジの見出し等）は Force Dark 任せ。Lab 彩度 35 以上の鮮やかな背景
+    （テーマ色ボタン・色見本）は `setForceDarkAllowed(false)` で元の色のまま。
+  - `GradientDrawable` の明るい枠線は明度 60 で頭打ちにし、反転後に中間グレーで見えるようにする
+    （`mGradientState` の枠線フィールドを読むため `Landroid/graphics/drawable/` も隠し API の除外対象）。
+  - 色の判定は色ごとに1回だけ計算してキャッシュ。実機（120Hz）で1フレームあたり平均 0.18ms・最大 0.85ms（View 112個）。
+    デバッグ版（パッケージ名 `.debug`）だけ約10秒ごとに `PatchDarkTint stats:` を Warn で出す。
+  - 書き換えた Drawable は元の値を覚えておき、ダークをやめたら戻す。
+- **ロゴ画像**: ホームの `ic_domico_home`・起動画面の `ic_splash` は黄色を保って黒文字だけ明るくする色行列、
+  `ic_logo_kyoritsu_splash` は黒文字→明るいグレー・青→明るい青・桃色はそのままの色行列を掛ける。
+  Activity ごとに Resources（画像キャッシュ）が別なので、その View 自身の Resources で読んだ画像と比べて判定する。
+- **ライト固定の画面**: 食堂で係の人に見せる `CheckInCompletedDialog` は、ダーク中も公式どおりライトで描く
+  （`FragmentManager.findFragment` でウィンドウ中身の DialogFragment を判定）。
+- **起動直後の画面**: OS が出すスプラッシュはアプリのコードより先に manifest のテーマ（白地）で描かれる。
+  Android 13+ の `SplashScreen#setSplashScreenTheme` で、次回起動からフレームワーク標準の
+  `Theme.Black.NoTitleBar` を使うよう切り替える（ダークをやめたら既定へ戻す）。
+- **システムバー**: Force Dark はバーのアイコン色を変えないため、ダーク中は前面 Activity の
+  `APPEARANCE_LIGHT_STATUS_BARS / _NAVIGATION_BARS` を外し、オフ時に元の値へ戻す（API 30+）。
+  アプリが後から黒アイコン指定をし直すので、これも毎フレーム確認して外す。
+- **クラッシュガード**: 回避処理の準備中は `dark_mode_guard=true` を同期保存し、終わったら false に戻す。
+  準備中にプロセスが落ちて true が残っていたら、次回起動時にモードをオフへ戻して起動ループを防ぐ。
+- **既知の制約**: Android 9 以下は非対応（何もしない）。お知らせ詳細などの WebView の中身は Force Dark が
+  効かず白いまま（第2段階で CSS 注入予定）。暗い単色 PNG アイコンが暗背景に沈む場合は個別に
+  `View#setForceDarkAllowed(false)` で除外する。
+- 実装前の見た目確認: 開発者向けオプション「フォースダークをオーバーライド」+ OS ダークテーマで、
+  ほぼ同じ見た目をコード無しで確認できる（公式テーマが `forceDarkAllowed` を明示していないため）。
+
 ## ビルド方式: dex 差し替え（apktool 全体リビルドは使わない）
 apktool で `resources.arsc` / `AndroidManifest.xml` を再エンコードすると、一部端末（Xiaomi/HyperOS 等）が `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾く。そこで **外科的 dex 差し替え** に変更した。
 

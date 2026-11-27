@@ -37,6 +37,11 @@ OK で公式の `CheckInDialog` を開く（和食/洋食の正しい表示と�
 送信は公式と同一の `POST v1/reservations/checkin`（`reservation_id` のみ）で、独自通信は行わない。
 **裏機能のため既定オフ**。サーバーが時間窓を強制していれば時間外要求は弾かれる（詳細は patch-notes）。
 
+### 6. ダークモード（既定オフ）
+設定画面で「オフ / 端末設定に従う / 常にダーク」から選ぶ。公式はライトテーマ固定でリソースも変えられないため、
+Android 10+ の **Force Dark**（OS の自動ダーク）を各ウィンドウへ実行時に掛ける。再起動なしで即時反映。
+隠し API を使うため LSPosed の HiddenApiBypass（Apache-2.0）を同梱。WebView の中身（お知らせ本文など）は暗くならない。
+
 詳細:
 - 調査メモ: [docs/findings.md](docs/findings.md)
 - 差分メモ: [docs/patch-notes.md](docs/patch-notes.md)
@@ -57,12 +62,14 @@ OK で公式の `CheckInDialog` を開く（和食/洋食の正しい表示と�
 module/
   src/              # パッチ本体（Java）。javac→d8 で独立した classes5.dex になる
   stubs/            # コンパイル専用スタブ（dex には入らない／実行時は公式クラスを解決）
+  libs/             # 同梱ライブラリ jar（パッチ dex に一緒に入る。例: HiddenApiBypass）
 scripts/
   build_module.py   # module/ を単一 dex にビルド（版文字列も埋め込む）
   patch_smali.py    # 全パッチの smali 適用（冪等・アンカー基準・版ズレで失敗）
   patch_assets/     # 未移行の patch/*.smali（順次 module/src へ移行中）
   patch_apk.py      # classes4.dex を差し替え＋パッチ dex を追加（リソース据置）
   build.py          # 入力(xapk/フォルダ)→dexパッチ→zipalign→全split署名→個別apk出力
+  rename_package.py # デバッグ用: manifest の文字列プールだけ書き換えてパッケージ名を変更
   pull-splits.{ps1,sh}   # 端末の公式版から全スプリット(config.ja含む)を吸い出す
   setup-signing.{ps1,sh} # 署名鍵作成 + GitHub Secrets 登録（ワンショット）
   gen-keystore.{sh,ps1}  # 署名鍵生成のみ
@@ -83,6 +90,13 @@ powershell -ExecutionPolicy Bypass -File scripts/pull-splits.ps1
 python scripts/build.py --input work/device_splits --keystore work/domico.keystore --ks-pass <pass> --alias domico
 # 出力: work/out/domico-patch.apk → adb install -r work\out\domico-patch.apk
 ```
+
+**デバッグ版（別パッケージ）**: `--package jp.co.kyoritsu.domico.debug` を付けると、パッケージ名・provider authority・独自 permission を差し替え、アプリ名を「Domico (debug)」にした別アプリとしてビルドする。公式版・通常パッチ版と並べて入れられるため、署名鍵も Android のデバッグ鍵で足りる。
+```powershell
+python scripts/build.py --input work/device_splits --out work/out-debugpkg --app-version 1.5.6 --channel dev --package jp.co.kyoritsu.domico.debug --keystore "$env:USERPROFILE\.android\debug.keystore" --ks-pass android --alias androiddebugkey
+```
+- 別パッケージ扱いのため、ログイン状態・端末内設定は通常版と共有されない（初回ログインが必要）。
+- Firebase(FCM) はパッケージ名に紐づくため、デバッグ版ではプッシュ通知が届かないことがある。
 詳細は [docs/install.md](docs/install.md)。
 
 ## 注意

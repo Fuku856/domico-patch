@@ -23,12 +23,16 @@ public final class PatchPrefs {
     static final String KEY_CHECKIN = "checkin_outoftime";
     static final String KEY_AUTO_CHECKIN = "checkin_autocheckin";
     static final String KEY_PUSH_DEBUG = "push_debug_log";
+    /** ダークモードの3択 (int)。値は {@link PatchDarkMode} の MODE_* 。 */
+    static final String KEY_DARK_MODE = "dark_mode";
 
     public static volatile boolean toastEnabled = true;
     public static volatile boolean loadingEnabled = true;
     public static volatile boolean telemetryOff = true;
     public static volatile boolean checkinEnabled;
     public static volatile boolean autoCheckinEnabled;
+    /** 0=オフ / 1=端末設定に従う / 2=常にダーク。既定はオフ。 */
+    public static volatile int darkMode;
 
     public static boolean get(Context ctx, String key, boolean def) {
         if (ctx == null) {
@@ -57,6 +61,26 @@ public final class PatchPrefs {
         telemetryOff = sp.getBoolean(KEY_TELEMETRY, defaultOf(KEY_TELEMETRY));
         checkinEnabled = sp.getBoolean(KEY_CHECKIN, defaultOf(KEY_CHECKIN));
         autoCheckinEnabled = sp.getBoolean(KEY_AUTO_CHECKIN, defaultOf(KEY_AUTO_CHECKIN));
+        darkMode = sp.getInt(KEY_DARK_MODE, 0);
+    }
+
+    public static int getInt(Context ctx, String key, int def) {
+        if (ctx == null) {
+            return def;
+        }
+        return ctx.getSharedPreferences(FILE, 0).getInt(key, def);
+    }
+
+    /**
+     * int 設定を保存する。{@code commit()} で同期書き込みするのは、直後に
+     * プロセスが落ちても値が残っている必要があるクラッシュガードでも使うため。
+     */
+    public static void setInt(Context ctx, String key, int value) {
+        if (ctx == null) {
+            return;
+        }
+        ctx.getSharedPreferences(FILE, 0).edit().putInt(key, value).commit();
+        load(ctx);
     }
 
     public static void set(Context ctx, String key, boolean value) {
