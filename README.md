@@ -69,6 +69,7 @@ scripts/
   patch_assets/     # 未移行の patch/*.smali（順次 module/src へ移行中）
   patch_apk.py      # classes4.dex を差し替え＋パッチ dex を追加（リソース据置）
   build.py          # 入力(xapk/フォルダ)→dexパッチ→zipalign→全split署名→個別apk出力
+  rename_package.py # デバッグ用: manifest の文字列プールだけ書き換えてパッケージ名を変更
   pull-splits.{ps1,sh}   # 端末の公式版から全スプリット(config.ja含む)を吸い出す
   setup-signing.{ps1,sh} # 署名鍵作成 + GitHub Secrets 登録（ワンショット）
   gen-keystore.{sh,ps1}  # 署名鍵生成のみ
@@ -89,6 +90,13 @@ powershell -ExecutionPolicy Bypass -File scripts/pull-splits.ps1
 python scripts/build.py --input work/device_splits --keystore work/domico.keystore --ks-pass <pass> --alias domico
 # 出力: work/out/*.apk → adb install-multiple --no-incremental -r work\out\*.apk
 ```
+
+**デバッグ版（別パッケージ）**: `--package jp.co.kyoritsu.domico.debug` を付けると、パッケージ名・provider authority・独自 permission を差し替え、アプリ名を「Domico (debug)」にした別アプリとしてビルドする。公式版・通常パッチ版と並べて入れられるため、署名鍵も Android のデバッグ鍵で足りる。
+```powershell
+python scripts/build.py --input work/device_splits --out work/out-debugpkg --app-version 1.5.6 --channel dev --package jp.co.kyoritsu.domico.debug --keystore "$env:USERPROFILE\.android\debug.keystore" --ks-pass android --alias androiddebugkey
+```
+- 別パッケージ扱いのため、ログイン状態・端末内設定は通常版と共有されない（初回ログインが必要）。
+- Firebase(FCM) はパッケージ名に紐づくため、デバッグ版ではプッシュ通知が届かないことがある。
 詳細は [docs/install.md](docs/install.md)。
 
 ## 注意
