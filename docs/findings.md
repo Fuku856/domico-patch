@@ -94,6 +94,27 @@
 - **残置物**: `PatchPushDump`（module/src の Java・`Download/domico-patch/` へ保存）と
   `push_debug_log` トグルは**既定オフ**で dev に残してある。将来 push の中身を覗きたくなったら使える。
 
+## 強制アップデートの調査（v1.5.6）
+- **通信と判定箇所**: `ApiStores.forceUpdateApp()` = `@GET("v1/settings")` → `ForceUpdateResponse.data`
+  （`ForceUpdateDTO`: `force_update`, `android_version`, `android_update_link`, `update_popup_title`,
+  `update_popup_message`）。HTTP リクエストヘッダ（`AppModule.provideApplicationInterceptor`）は
+  `language` / `Authorization` / `platform: 2` のみでクライアント版数は送っておらず、判定は 100% クライアント側。
+- **発火経路は 2 系統**:
+  1. `MainActivity.onResume()` が毎回直接 `AppModelView.forceUpdate()` を呼ぶ（起動直後のスプラッシュ中＋復帰時）。
+  2. `MainActivity.onForceUpdateEvent(ForceUpdateEvent)`（`MainTabHostFragment.onResume()` および
+     **下部ナビのタブ切替 `postEventTabSelected(int)` のたび**に EventBus 投稿）も `forceUpdate()` を呼ぶ。
+  → `onForceUpdateEvent` の入口だけを早期 return しても `onResume()` 経路は防げない。
+- **`forceUpdate()` 自体を止めるとスプラッシュ画面で永久停止する**:
+  `SplashFragment` は自前でタイマーを開始せず、`MainActivity` が `v1/settings` 応答後に EventBus へ投げる
+  `CheckUpdateEvent(true)`（初回）または `PassUpdateEvent(true)`（2 回目以降、`MealAppFragment` の初回
+  チュートリアルも購読）を受けて初めて `processUI()`（トークン更新→ホーム/ログイン遷移）をスケジュールする。
+- **ロックアウトの実体**: `MainActivity.observeViewModel$lambda$4` が `isForceUpdate()==true` かつ
+  `toVersionApp(androidVersion) > toVersionApp("1.5.6")` のとき、`AlertUtils.showAlert`（`isCancelable=false`）
+  を出して `CheckUpdateEvent` を投げずに `return` する。唯一のボタンを押すと `openAppOnPlayStore` が
+  Play ストアを開いて `MainActivity.finish()` するため、再署名版では更新も設定変更もできず詰む。
+- **方針**: `observeViewModel$lambda$*` のバージョン比較 `if-le` 直後で `PatchForceUpdate.shouldSkip` を呼び、
+  ON 時はそのまま公式の通常通過ラベル（`CheckUpdateEvent` / `PassUpdateEvent` 投稿パス）へジャンプさせる。
+
 ## 実地知見（Xiaomi POCO F7 Pro / HyperOS）
 - **apktool 全体リビルドは不可**: `resources.arsc` / `AndroidManifest` を再エンコードした base は `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾かれた。無改変で再署名しただけのセットは入るため、原因は再署名でも端末ポリシーでもなく apktool のリソース再構築と判明。→ `classes4.dex` のみ差し替える方式（[patch_apk.py](../scripts/patch_apk.py)）で解決。
 - **日本語**: 文言は base になく `config.ja` スプリット側にある。base の既定は英語。

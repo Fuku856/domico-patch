@@ -235,6 +235,45 @@
 - 実装前の見た目確認: 開発者向けオプション「フォースダークをオーバーライド」+ OS ダークテーマで、
   ほぼ同じ見た目をコード無しで確認できる（公式テーマが `forceDarkAllowed` を明示していないため）。
 
+## 8. 強制アップデート スキップ（既定 ON）
+- 対象: `MainActivity.smali`（`smali_classes4`）、新規 `module/src/.../patch/PatchForceUpdate.java`、
+  コンパイル用スタブ `module/stubs/.../model/ForceUpdateDTO.java`。
+  設定は `PatchPrefs.forceUpdateSkip`（キー `force_update_skip`、**既定 true**）。
+- **注入箇所**: `MainActivity` 内の `(MainActivity, ForceUpdateDTO)V` シグネチャかつ
+  `ForceUpdateDTO.isForceUpdate()` を呼ぶ `private static final` 観測メソッドにおいて、
+  `toVersionApp(String)I` 比較の `if-le <reg_ver>, <reg_cur>, <pass_label>` 直後に挿入する
+  （ラムダ連番 `$lambda$4` 等には依存しない）。
+
+```smali
+    if-le v0, v2, :cond_8b
+    # domico-patch: skip force-update dialog (gated)
+    invoke-static/range {p0 .. p1}, Lvn/com/bravesoft/androidapp/patch/PatchForceUpdate;->shouldSkip(Landroid/app/Activity;Lvn/com/bravesoft/androidapp/model/ForceUpdateDTO;)Z
+    move-result v0
+    if-nez v0, :cond_8b
+```
+
+- **注入前の安全チェック**（どれか外れたら FAIL させ、壊れた APK を作らない）:
+  - アンカーは `isForceUpdate()` 以降で最初の 2 回の `toVersionApp` 呼び出し直後の `if-le` に限り、
+    そのオペランドが 2 回の呼び出しの `move-result` レジスタ（要求版・自版）と一致することを確かめる。
+  - メソッド先頭からアンカーまでに `p0` / `p1` へ書き込む命令が無いことを確かめる
+    （R8 がスクラッチに再利用していると型不一致で `VerifyError` になり起動不能になるため）。
+  - 呼び出しは `/range` 形式にし、`.locals` が増えて `p0`/`p1` が v16 以上になっても組めるようにする。
+- **なぜここでジャンプするか**:
+  - `MainActivity.onResume()` と `MainActivity.onForceUpdateEvent`（タブ切替のたび）の両経路が
+    最終的にこの観測メソッドへ合流するため、1 箇所のゲートで全経路を漏れなくカバーできる。
+  - `:cond_8b`（公式の「更新不要」分岐）へ合流させることで、`isSendEventUpdate` フラグ管理と
+    `CheckUpdateEvent(true)` / `PassUpdateEvent(true)` の EventBus 投稿が公式そのまま走り、
+    `SplashFragment` の画面遷移や `MealAppFragment` の初回チュートリアルを壊さない。
+  - レジスタ `v1`（`= 0x1`）が後続の `sget-object v1, AlertUtils` で上書きされるより手前で
+    ジャンプするため、ジャンプ先 `:cond_8b` が期待する `v1 = 1` もそのまま保たれる。
+- **控えめな通知と設定画面表示**:
+  - 強制更新条件（`isForceUpdate==true` かつ `remoteVer > localVer`）に該当したときだけ
+    `PatchForceUpdate.shouldSkip` が呼ばれる。`dto.getAndroidVersion()` をメモリに記録し、
+    パッチ ON 時はプロセス内で初回 1 回だけ `Toast.LENGTH_SHORT` で新バージョン公開を通知する
+    （タブ切替や復帰のたびに再通知しない）。
+  - パッチ設定画面（`PatchSettingsDialog`）を開いた際、検知済みバージョンがあれば
+    「強制アップデートをスキップ」行の説明文末尾に検知中の旨を追記する。
+
 ## ビルド方式: dex 差し替え（apktool 全体リビルドは使わない）
 apktool で `resources.arsc` / `AndroidManifest.xml` を再エンコードすると、一部端末（Xiaomi/HyperOS 等）が `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾く。そこで **外科的 dex 差し替え** に変更した。
 

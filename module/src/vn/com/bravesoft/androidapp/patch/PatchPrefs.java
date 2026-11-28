@@ -20,6 +20,7 @@ public final class PatchPrefs {
     static final String KEY_TOAST = "toast_clickthrough";
     static final String KEY_LOADING = "loading_clickthrough";
     static final String KEY_TELEMETRY = "telemetry_off";
+    static final String KEY_FORCE_UPDATE = "force_update_skip";
     static final String KEY_CHECKIN = "checkin_outoftime";
     static final String KEY_AUTO_CHECKIN = "checkin_autocheckin";
     static final String KEY_PUSH_DEBUG = "push_debug_log";
@@ -29,6 +30,7 @@ public final class PatchPrefs {
     public static volatile boolean toastEnabled = true;
     public static volatile boolean loadingEnabled = true;
     public static volatile boolean telemetryOff = true;
+    public static volatile boolean forceUpdateSkip = true;
     public static volatile boolean checkinEnabled;
     public static volatile boolean autoCheckinEnabled;
     /** 0=オフ / 1=端末設定に従う / 2=常にダーク。既定はオフ。 */
@@ -43,7 +45,7 @@ public final class PatchPrefs {
 
     /**
      * キーごとの既定値。裏機能 (時間外チェックイン / 自動チェックイン) と
-     * デバッグ用の push ログだけ既定 OFF、他は既定 ON。
+     * デバッグ用の push ログだけ既定 OFF、他 (強制更新スキップ含む) は既定 ON。
      */
     public static boolean defaultOf(String key) {
         return !(KEY_CHECKIN.equals(key)
@@ -59,6 +61,7 @@ public final class PatchPrefs {
         toastEnabled = sp.getBoolean(KEY_TOAST, defaultOf(KEY_TOAST));
         loadingEnabled = sp.getBoolean(KEY_LOADING, defaultOf(KEY_LOADING));
         telemetryOff = sp.getBoolean(KEY_TELEMETRY, defaultOf(KEY_TELEMETRY));
+        forceUpdateSkip = sp.getBoolean(KEY_FORCE_UPDATE, defaultOf(KEY_FORCE_UPDATE));
         checkinEnabled = sp.getBoolean(KEY_CHECKIN, defaultOf(KEY_CHECKIN));
         autoCheckinEnabled = sp.getBoolean(KEY_AUTO_CHECKIN, defaultOf(KEY_AUTO_CHECKIN));
         darkMode = sp.getInt(KEY_DARK_MODE, 0);
