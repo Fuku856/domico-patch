@@ -56,6 +56,7 @@ REL_MENU = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "MenuFragm
 REL_TABHOST = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "MainTabHostFragment.smali")
 REL_HOME = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "HomeFragment.smali")
 REL_FCM = os.path.join("vn", "com", "bravesoft", "androidapp", "service", "MyFirebaseMessagingService.smali")
+REL_MAINACTIVITY = os.path.join("vn", "com", "bravesoft", "androidapp", "MainActivity.smali")
 
 # マーカー(冪等判定)
 M_TOAST = "# domico-patch: gated login-toast click-through"
@@ -69,6 +70,7 @@ M_CHECKIN_CONFIRM = "# domico-patch: out-of-time check-in confirm gate"
 M_CHECKIN_BYPASS = "# domico-patch: E1015 bypass interceptor"
 M_AUTOCHECKIN_FIRE = "# domico-patch: auto check-in fire on showUICheckIn"
 M_PUSHLOG = "# domico-patch: dump push payload to on-device file (gated)"
+M_FORCEUPDATE = "# domico-patch: skip force-update dialog (gated)"
 
 
 def log(m):
@@ -664,6 +666,100 @@ def patch_pushlog(base_dir, check_only):
     return True, True, "injected PatchPushDump.dump into onMessageReceived"
 
 
+# ---- patch 12: MainActivity force-update dialog skip -----------------------
+
+# MainActivity.observeViewModel 内の onForceUpdateApp 観測ラムダを対象にする。
+# ラムダ連番($lambda$4 等)は版更新でずれ得るため、引数シグネチャ
+# (MainActivity, ForceUpdateDTO)V かつ本体に ForceUpdateDTO.isForceUpdate() を
+# 含む private static final メソッドを走査して一意に特定する。
+FORCEUPDATE_METHOD_RE = re.compile(
+    r"^\.method\s+private\s+static\s+final\s+\S+\("
+    r"Lvn/com/bravesoft/androidapp/MainActivity;"
+    r"Lvn/com/bravesoft/androidapp/model/ForceUpdateDTO;\)V\s*$"
+)
+ISFORCEUPDATE_CALL = (
+    "Lvn/com/bravesoft/androidapp/model/ForceUpdateDTO;"
+    "->isForceUpdate()Ljava/lang/Boolean;"
+)
+TOVERSIONAPP_CALL = (
+    "Lvn/com/bravesoft/androidapp/ext/StringExtensionKt;"
+    "->toVersionApp(Ljava/lang/String;)I"
+)
+IFLE_RE = re.compile(r"^(\s*)if-le\s+(v\d+),\s*(v\d+),\s*(:\S+)\s*$")
+FORCEUPDATE_DTO_DESC = "Lvn/com/bravesoft/androidapp/model/ForceUpdateDTO;"
+
+
+def patch_forceupdate(base_dir, check_only):
+    _root, path = find_smali_dir(base_dir, REL_MAINACTIVITY)
+    if not path:
+        return False, False, "MainActivity.smali not found"
+    lines = read_lines(path)
+    if M_FORCEUPDATE in "".join(lines):
+        return True, False, "already patched - skipped"
+
+    candidates = []
+    i = 0
+    while i < len(lines):
+        if FORCEUPDATE_METHOD_RE.match(lines[i]):
+            s, e = i, None
+            for j in range(s + 1, len(lines)):
+                if lines[j].startswith(".end method"):
+                    e = j
+                    break
+            if e is not None and any(ISFORCEUPDATE_CALL in lines[k] for k in range(s, e + 1)):
+                candidates.append((s, e))
+            i = (e + 1) if e is not None else (i + 1)
+            continue
+        i += 1
+
+    if len(candidates) != 1:
+        return (
+            False,
+            False,
+            f"expected 1 ForceUpdateDTO observer method in MainActivity, found {len(candidates)}",
+        )
+
+    ms, me = candidates[0]
+    seg = lines[ms : me + 1]
+    ifu_idx = next(idx for idx, ln in enumerate(seg) if ISFORCEUPDATE_CALL in ln)
+    tv_indices = [idx for idx in range(ifu_idx + 1, len(seg)) if TOVERSIONAPP_CALL in seg[idx]]
+    if len(tv_indices) < 2:
+        return False, False, "anchor toVersionApp(String)I pair not found in ForceUpdateDTO observer"
+
+    last_tv = tv_indices[-1]
+    anchor = indent = reg_ver = pass_label = None
+    for idx in range(last_tv + 1, min(last_tv + 10, len(seg))):
+        m = IFLE_RE.match(seg[idx])
+        if m:
+            anchor, indent, reg_ver, pass_label = idx, m.group(1), m.group(2), m.group(4)
+            break
+    if anchor is None:
+        return False, False, "anchor if-le after toVersionApp not found in ForceUpdateDTO observer"
+
+    if not any(ln.strip() == pass_label for ln in seg[anchor + 1 :]):
+        return False, False, f"target pass label {pass_label} not found in ForceUpdateDTO observer"
+
+    if check_only:
+        return (
+            True,
+            False,
+            f"would gate force-update dialog (scratch={reg_ver}, pass={pass_label}) [dry-run]",
+        )
+
+    inj = [
+        f"{indent}{M_FORCEUPDATE}\n",
+        f"{indent}invoke-static {{p0, p1}}, "
+        f"Lvn/com/bravesoft/androidapp/patch/PatchForceUpdate;->"
+        f"shouldSkip(Landroid/app/Activity;{FORCEUPDATE_DTO_DESC})Z\n",
+        f"{indent}move-result {reg_ver}\n",
+        f"{indent}if-nez {reg_ver}, {pass_label}\n",
+    ]
+    seg[anchor + 1 : anchor + 1] = inj
+    lines[ms : me + 1] = seg
+    write_lines(path, lines)
+    return True, True, f"gated force-update dialog (scratch={reg_ver}, pass={pass_label})"
+
+
 # ---- driver ----------------------------------------------------------------
 
 # (名前, 関数, 対象クラスの相対 smali パス)。
@@ -682,6 +778,7 @@ PATCHES = [
     ("checkin", patch_homefragment_checkin, REL_HOME),
     ("checkin-auto", patch_homefragment_autocheckin, REL_HOME),
     ("pushlog", patch_pushlog, REL_FCM),
+    ("force-update", patch_forceupdate, REL_MAINACTIVITY),
 ]
 
 

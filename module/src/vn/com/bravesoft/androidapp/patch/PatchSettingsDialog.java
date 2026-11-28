@@ -193,6 +193,18 @@ public final class PatchSettingsDialog {
                 "テレメトリ送信をブロック",
                 "Firebase Analytics / Crashlytics / Performance と広告 ID の送信をブロック。（アプリ通知は維持）",
                 PatchPrefs.KEY_TELEMETRY);
+        String forceUpdateDesc =
+                "署名違いで Play ストアから更新できないため、公式の強制更新ダイアログによる操作不能を防ぎます。";
+        String detectedVer = PatchForceUpdate.getDetectedVersion();
+        if (detectedVer != null && !detectedVer.isEmpty()) {
+            forceUpdateDesc = forceUpdateDesc
+                    + "\n※ 公式 v" + detectedVer + " の強制更新要求を検知・スキップ中"
+                    + "（GitHub Release の更新を確認してください）";
+        }
+        addRow(ctx, content,
+                "強制アップデートをスキップ",
+                forceUpdateDesc,
+                PatchPrefs.KEY_FORCE_UPDATE);
         addDarkModeRow(ctx, content);
         LinearLayout checkinRow = addRow(ctx, content,
                 "時間外チェックイン",

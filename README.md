@@ -42,6 +42,12 @@ OK で公式の `CheckInDialog` を開く（和食/洋食の正しい表示と�
 Android 10+ の **Force Dark**（OS の自動ダーク）を各ウィンドウへ実行時に掛ける。再起動なしで即時反映。
 隠し API を使うため LSPosed の HiddenApiBypass（Apache-2.0）を同梱。WebView の中身（お知らせ本文など）は暗くならない。
 
+### 7. 強制アップデート スキップ
+再署名版は公式と署名が異なるため Google Play から直接更新できない。公式サーバー（`GET v1/settings`）が
+強制アップデートを有効化するとキャンセル不可ダイアログから Play ストアへ飛ばされ操作不能になるため、
+既定 ON でダイアログを自動スキップし、通常どおり起動・画面遷移させる。新バージョン要求を検知したときは
+1回の起動につき初回1回だけ控えめな Toast で知らせ、パッチ設定画面にも検知バージョンを表示する。
+
 詳細:
 - 調査メモ: [docs/findings.md](docs/findings.md)
 - 差分メモ: [docs/patch-notes.md](docs/patch-notes.md)
