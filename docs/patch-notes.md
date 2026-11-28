@@ -247,11 +247,17 @@
 ```smali
     if-le v0, v2, :cond_8b
     # domico-patch: skip force-update dialog (gated)
-    invoke-static {p0, p1}, Lvn/com/bravesoft/androidapp/patch/PatchForceUpdate;->shouldSkip(Landroid/app/Activity;Lvn/com/bravesoft/androidapp/model/ForceUpdateDTO;)Z
+    invoke-static/range {p0 .. p1}, Lvn/com/bravesoft/androidapp/patch/PatchForceUpdate;->shouldSkip(Landroid/app/Activity;Lvn/com/bravesoft/androidapp/model/ForceUpdateDTO;)Z
     move-result v0
     if-nez v0, :cond_8b
 ```
 
+- **注入前の安全チェック**（どれか外れたら FAIL させ、壊れた APK を作らない）:
+  - アンカーは `isForceUpdate()` 以降で最初の 2 回の `toVersionApp` 呼び出し直後の `if-le` に限り、
+    そのオペランドが 2 回の呼び出しの `move-result` レジスタ（要求版・自版）と一致することを確かめる。
+  - メソッド先頭からアンカーまでに `p0` / `p1` へ書き込む命令が無いことを確かめる
+    （R8 がスクラッチに再利用していると型不一致で `VerifyError` になり起動不能になるため）。
+  - 呼び出しは `/range` 形式にし、`.locals` が増えて `p0`/`p1` が v16 以上になっても組めるようにする。
 - **なぜここでジャンプするか**:
   - `MainActivity.onResume()` と `MainActivity.onForceUpdateEvent`（タブ切替のたび）の両経路が
     最終的にこの観測メソッドへ合流するため、1 箇所のゲートで全経路を漏れなくカバーできる。

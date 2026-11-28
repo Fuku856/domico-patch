@@ -687,6 +687,34 @@ TOVERSIONAPP_CALL = (
 )
 IFLE_RE = re.compile(r"^(\s*)if-le\s+(v\d+),\s*(v\d+),\s*(:\S+)\s*$")
 FORCEUPDATE_DTO_DESC = "Lvn/com/bravesoft/androidapp/model/ForceUpdateDTO;"
+MOVE_RESULT_RE = re.compile(r"^\s*move-result\s+(v\d+)\s*$")
+INSN_RE = re.compile(r"^\s*([a-z][a-z0-9/-]*)\s+([vp]\d+)\b")
+# 第 1 オペランドが書き込み先にならない命令(これ以外は第 1 オペランドへ書く)。
+NON_DEST_OPCODE_PREFIXES = (
+    "invoke-", "if-", "iput", "sput", "aput", "return", "throw", "monitor-",
+    "goto", "packed-switch", "sparse-switch", "fill-array-data", "filled-new-array",
+)
+
+
+def _move_result_reg(seg, start, end):
+    """seg[start+1:end] で最初に現れる `move-result vN` の vN を返す(無ければ None)。"""
+    for idx in range(start + 1, end):
+        m = MOVE_RESULT_RE.match(seg[idx])
+        if m:
+            return m.group(1)
+    return None
+
+
+def _first_param_write(seg, regs):
+    """seg 内で regs のいずれかへ書き込む最初の命令のレジスタ名を返す(無ければ None)。"""
+    for ln in seg:
+        m = INSN_RE.match(ln)
+        if not m:
+            continue
+        opcode, reg = m.group(1), m.group(2)
+        if reg in regs and not opcode.startswith(NON_DEST_OPCODE_PREFIXES):
+            return reg
+    return None
 
 
 def patch_forceupdate(base_dir, check_only):
@@ -726,18 +754,43 @@ def patch_forceupdate(base_dir, check_only):
     if len(tv_indices) < 2:
         return False, False, "anchor toVersionApp(String)I pair not found in ForceUpdateDTO observer"
 
-    last_tv = tv_indices[-1]
-    anchor = indent = reg_ver = pass_label = None
-    for idx in range(last_tv + 1, min(last_tv + 10, len(seg))):
+    # 比較は「公式要求版 toVersionApp → 自版 toVersionApp → if-le」の並び。
+    # 後続の分岐に toVersionApp が増えても誤爆しないよう先頭 2 回だけを使い、
+    # if-le のオペランドがその 2 つの戻り値であることまで確かめる。
+    tv_remote, tv_self = tv_indices[0], tv_indices[1]
+    reg_remote = _move_result_reg(seg, tv_remote, tv_self)
+    reg_self = _move_result_reg(seg, tv_self, min(tv_self + 6, len(seg)))
+    anchor = indent = reg_ver = reg_cmp = pass_label = None
+    for idx in range(tv_self + 1, min(tv_self + 10, len(seg))):
         m = IFLE_RE.match(seg[idx])
         if m:
-            anchor, indent, reg_ver, pass_label = idx, m.group(1), m.group(2), m.group(4)
+            anchor, indent, reg_ver, reg_cmp, pass_label = (
+                idx, m.group(1), m.group(2), m.group(3), m.group(4)
+            )
             break
     if anchor is None:
         return False, False, "anchor if-le after toVersionApp not found in ForceUpdateDTO observer"
+    if (reg_ver, reg_cmp) != (reg_remote, reg_self):
+        return (
+            False,
+            False,
+            f"if-le operands {reg_ver},{reg_cmp} do not match toVersionApp results "
+            f"{reg_remote},{reg_self} in ForceUpdateDTO observer",
+        )
 
     if not any(ln.strip() == pass_label for ln in seg[anchor + 1 :]):
         return False, False, f"target pass label {pass_label} not found in ForceUpdateDTO observer"
+
+    # ゲートには p0 (MainActivity) / p1 (ForceUpdateDTO) をそのまま渡す。R8 が
+    # アンカーより前で p0/p1 をスクラッチに再利用していると型不一致で
+    # VerifyError になり MainActivity ごと起動不能になるため、確実に FAIL させる。
+    clobbered = _first_param_write(seg[1:anchor], ("p0", "p1"))
+    if clobbered:
+        return (
+            False,
+            False,
+            f"{clobbered} is overwritten before the if-le anchor in ForceUpdateDTO observer",
+        )
 
     if check_only:
         return (
@@ -748,7 +801,9 @@ def patch_forceupdate(base_dir, check_only):
 
     inj = [
         f"{indent}{M_FORCEUPDATE}\n",
-        f"{indent}invoke-static {{p0, p1}}, "
+        # p0/p1 は .locals 数次第で v16 以上になり得る(非 range 形式は v15 まで)。
+        # 連番の 2 引数なので /range 形式にして常に組めるようにする。
+        f"{indent}invoke-static/range {{p0 .. p1}}, "
         f"Lvn/com/bravesoft/androidapp/patch/PatchForceUpdate;->"
         f"shouldSkip(Landroid/app/Activity;{FORCEUPDATE_DTO_DESC})Z\n",
         f"{indent}move-result {reg_ver}\n",

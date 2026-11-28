@@ -96,7 +96,7 @@ class PatchForceUpdateTests(unittest.TestCase):
                 patched = f.read()
             self.assertIn(patch_smali.M_FORCEUPDATE, patched)
             self.assertIn(
-                "invoke-static {p0, p1}, "
+                "invoke-static/range {p0 .. p1}, "
                 "Lvn/com/bravesoft/androidapp/patch/PatchForceUpdate;->"
                 "shouldSkip(Landroid/app/Activity;"
                 "Lvn/com/bravesoft/androidapp/model/ForceUpdateDTO;)Z",
@@ -134,6 +134,54 @@ class PatchForceUpdateTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertFalse(changed)
             self.assertIn("ForceUpdateDTO observer", msg)
+
+    def test_ignores_later_toversionapp_in_other_branch(self):
+        # 非強制分岐にも toVersionApp 比較が増えた版を想定。先頭の比較にだけ注入する。
+        extra = SAMPLE_MAINACTIVITY.replace(
+            "    :cond_not_force\n    return-void\n",
+            "    :cond_not_force\n"
+            "    invoke-static {v3}, Lvn/com/bravesoft/androidapp/ext/StringExtensionKt;"
+            "->toVersionApp(Ljava/lang/String;)I\n"
+            "    move-result v5\n"
+            "    if-le v5, v4, :cond_end\n"
+            "    return-void\n",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_fixture(tmp, extra)
+            ok, changed, msg = patch_smali.patch_forceupdate(tmp, check_only=False)
+            self.assertTrue(ok, msg)
+            self.assertTrue(changed)
+            self.assertIn("pass=:cond_pass_1", msg)
+            with open(path, encoding="utf-8") as f:
+                patched = f.read()
+            self.assertIn(
+                "if-le v3, v4, :cond_pass_1\n    " + patch_smali.M_FORCEUPDATE, patched
+            )
+            self.assertEqual(patched.count(patch_smali.M_FORCEUPDATE), 1)
+
+    def test_fails_when_if_le_operands_mismatch(self):
+        broken = SAMPLE_MAINACTIVITY.replace(
+            "if-le v3, v4, :cond_pass_1", "if-le v4, v3, :cond_pass_1"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_fixture(tmp, broken)
+            ok, changed, msg = patch_smali.patch_forceupdate(tmp, check_only=False)
+            self.assertFalse(ok)
+            self.assertFalse(changed)
+            self.assertIn("operands", msg)
+
+    def test_fails_when_param_register_clobbered(self):
+        # R8 が p1 をスクラッチに再利用した版では DTO を渡せないので FAIL させる。
+        broken = SAMPLE_MAINACTIVITY.replace(
+            '    const-string v4, "1.5.6"',
+            '    const/4 p1, 0x0\n    const-string v4, "1.5.6"',
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_fixture(tmp, broken)
+            ok, changed, msg = patch_smali.patch_forceupdate(tmp, check_only=False)
+            self.assertFalse(ok)
+            self.assertFalse(changed)
+            self.assertIn("p1 is overwritten", msg)
 
 
 if __name__ == "__main__":

@@ -198,7 +198,8 @@ public final class PatchSettingsDialog {
         String detectedVer = PatchForceUpdate.getDetectedVersion();
         if (detectedVer != null && !detectedVer.isEmpty()) {
             forceUpdateDesc = forceUpdateDesc
-                    + "\n※ 公式 v" + detectedVer + " の強制更新要求を検知・スキップ中"
+                    + "\n※ 公式 v" + detectedVer + " の強制更新要求を検知"
+                    + (PatchPrefs.forceUpdateSkip ? "・スキップ中" : "")
                     + "（GitHub Release の更新を確認してください）";
         }
         addRow(ctx, content,
