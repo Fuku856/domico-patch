@@ -23,6 +23,7 @@ public final class PatchActivityTracker implements Application.ActivityLifecycle
     public void onActivityResumed(Activity activity) {
         PatchLoadingState.setActivity(activity);
         PatchDarkMode.onActivityResumed(activity);
+        PatchThemeColor.setTopActivity(activity);
     }
 
     @Override

@@ -25,6 +25,10 @@ public final class PatchPrefs {
     static final String KEY_PUSH_DEBUG = "push_debug_log";
     /** ダークモードの3択 (int)。値は {@link PatchDarkMode} の MODE_* 。 */
     static final String KEY_DARK_MODE = "dark_mode";
+    /** カスタムテーマカラーの有効フラグ (boolean)。 */
+    static final String KEY_THEME_CUSTOM_ENABLED = "theme_custom_enabled";
+    /** カスタムテーマカラーの ARGB 値 (int, 0xFFRRGGBB)。 */
+    static final String KEY_THEME_CUSTOM_COLOR = "theme_custom_color";
 
     public static volatile boolean toastEnabled = true;
     public static volatile boolean loadingEnabled = true;
@@ -33,6 +37,12 @@ public final class PatchPrefs {
     public static volatile boolean autoCheckinEnabled;
     /** 0=オフ / 1=端末設定に従う / 2=常にダーク。既定はオフ。 */
     public static volatile int darkMode;
+    /** カスタムテーマカラーが有効か（既定オフ＝公式プリセットを使用）。 */
+    public static volatile boolean customThemeEnabled;
+    /** カスタムテーマカラー（不透明 ARGB、既定 #FFDD00）。プリセット復帰時も記憶保持する。 */
+    public static volatile int customThemeColor = 0xFFFFDD00;
+    /** カスタムカラーが一度でも保存されているか。 */
+    public static volatile boolean hasSavedCustomColor;
 
     public static boolean get(Context ctx, String key, boolean def) {
         if (ctx == null) {
@@ -62,6 +72,35 @@ public final class PatchPrefs {
         checkinEnabled = sp.getBoolean(KEY_CHECKIN, defaultOf(KEY_CHECKIN));
         autoCheckinEnabled = sp.getBoolean(KEY_AUTO_CHECKIN, defaultOf(KEY_AUTO_CHECKIN));
         darkMode = sp.getInt(KEY_DARK_MODE, 0);
+        customThemeEnabled = sp.getBoolean(KEY_THEME_CUSTOM_ENABLED, false);
+        hasSavedCustomColor = sp.contains(KEY_THEME_CUSTOM_COLOR);
+        customThemeColor = 0xFF000000 | sp.getInt(KEY_THEME_CUSTOM_COLOR, 0xFFFFDD00);
+    }
+
+    /** カスタムテーマカラーを保存して有効化する。 */
+    public static void setCustomThemeColor(Context ctx, int color) {
+        if (ctx == null) {
+            return;
+        }
+        int opaque = 0xFF000000 | color;
+        ctx.getSharedPreferences(FILE, 0)
+                .edit()
+                .putInt(KEY_THEME_CUSTOM_COLOR, opaque)
+                .putBoolean(KEY_THEME_CUSTOM_ENABLED, true)
+                .commit();
+        load(ctx);
+    }
+
+    /** カスタムテーマカラーの有効/無効を切り替える（保存済みの色自体は保持）。 */
+    public static void setCustomThemeEnabled(Context ctx, boolean enabled) {
+        if (ctx == null) {
+            return;
+        }
+        ctx.getSharedPreferences(FILE, 0)
+                .edit()
+                .putBoolean(KEY_THEME_CUSTOM_ENABLED, enabled)
+                .commit();
+        load(ctx);
     }
 
     public static int getInt(Context ctx, String key, int def) {

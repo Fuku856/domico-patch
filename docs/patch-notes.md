@@ -235,6 +235,31 @@
 - 実装前の見た目確認: 開発者向けオプション「フォースダークをオーバーライド」+ OS ダークテーマで、
   ほぼ同じ見た目をコード無しで確認できる（公式テーマが `forceDarkAllowed` を明示していないため）。
 
+## 8. テーマカラーの自由選択（カスタムピッカー / HEX 指定）
+- 対象: `utils/ThemeUtils.smali`・`ui/ChangeColorDialog.smali`・`ui/NoticeFragment.smali`（すべて `smali_classes4`）、
+  新規 `module/src/.../patch/PatchThemeColor.java` / `PatchColorPickerView.java` / `PatchColorPickerDialog.java` / `PatchChangeColorHook.java`。
+  設定は `PatchPrefs.customThemeEnabled`（boolean, 既定 false）と `PatchPrefs.customThemeColor`（int, `0xFFRRGGBB`）。
+  プリセットへ戻した際もカスタム色値は保持し、再選択時にすぐ呼び出せる。
+- **カラー解決（`PatchThemeColor`）**:
+  - `ThemeUtils` の単一 `Context` メソッド群の先頭で `customThemeEnabled` を検査し、有効時は `PatchThemeColor` から派生色を返す:
+    - プライマリ色 (`getColor` / `buttonBgColor` / `calendarTodayColor`): 指定カスタム色 `0xFFRRGGBB`。
+    - ボタン文字・アイコン色 (`buttonTextColor` / `buttonIconColor` / `drawableTint*`): WCAG 相対輝度 `Y > 0.42` なら濃紺 `#232A37`、それ以下なら白 `#FFFFFF`（公式4色の挙動とも完全一致）。
+    - 下部ナビ選択色 (`getColorBottomBar`): ライト表示での極高明度色 (`L* > 86`) は `L*=78` へ抑え、ダーク表示での極暗色 (`L* < 25`) は `L*=38` へ持ち上げて視認性を確保。
+    - 画面全体の淡い背景色 (`getBackgroundColor`): 明度フロア補正のうえ白 `#FFFFFF` に 7% ブレンドした極薄パステル色を生成。
+    - チャット吹き出し (`getBgMessageChat` / `getColorMessageChat`): 白と 38% ブレンドした吹き出し色と輝度に応じた黒/白文字。
+    - キャンセルボタン (`buttonCancel` / `buttonCancelLabelColor`): 色相が赤〜マゼンタ帯または青〜紫帯のときは赤枠との干渉を避けグレー塗り＋濃紺文字に切替。
+    - PNG アイコン系 (`buttonFavoriteBg` / `getIconEditTemplate` / `getIconRemoveTemplate`): CIE Lab 色差が最小の公式プリセット ID (`0..3`) へリマップ。
+  - お知らせタブ (`NoticeFragment.init`): カスタム有効時に `StateListDrawable`（選択時＝カスタム色、非選択時＝白）とタブ文字色を適用。
+- **カラーピッカー UI (`PatchColorPickerDialog` / `PatchColorPickerView`)**:
+  - リソース追加なしの純 Java `Canvas` 描画で 2D 彩度×明度パレット・色相スライダー・クイックスウォッチ 10 色・双方向同期 HEX 入力（`#` 付きペーストや 3 桁短縮対応、コピー機能付き）を提供。
+  - 上部に実際の極薄パステル背景とプライマリボタン・自動文字色のリアルタイムプレビューと変更前後比較チップを配置。`setForceDarkAllowed(false)` によりダークモード中も正確な色味で選択可能。
+- **2つの導線の双方向統合**:
+  - `PatchSettingsDialog`: ヘッダーバー色・文字色を現在の実効テーマカラーに連動させ、スウォッチ付きの「テーマカラー」行を追加。
+  - `ChangeColorDialog` (`PatchChangeColorHook`): 公式の 4 色スウォッチの隣に 5 つ目のカスタムスウォッチ（未設定時は色相環＋`+`、設定時はカスタム色＋公式チェックマーク）を追加。`THEME_ID_CUSTOM (-100)` で保存ボタンのプレビューも連動し、公式プリセット選択保存時はカスタム設定を自動解除する。
+- **即時反映とダークモード保護**:
+  - 変更時は `EventBus` の `ChangeColorEvent` 送出に加え、前面 Activity の可視 Fragment ツリーにある `onChangeColorEvent()`（`HomeFragment` 等）も呼び出して全画面を再起動なしで更新。
+  - `PatchDarkTint` はカスタムプライマリ色・チャット吹き出し色を `K_ACCENT` として保護し、低彩度やパステル色でも黒潰れ・反転を防ぐ。
+
 ## ビルド方式: dex 差し替え（apktool 全体リビルドは使わない）
 apktool で `resources.arsc` / `AndroidManifest.xml` を再エンコードすると、一部端末（Xiaomi/HyperOS 等）が `INSTALL_FAILED_USER_RESTRICTED: Invalid apk` で弾く。そこで **外科的 dex 差し替え** に変更した。
 

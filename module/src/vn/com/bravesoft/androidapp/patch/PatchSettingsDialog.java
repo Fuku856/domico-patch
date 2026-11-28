@@ -4,6 +4,7 @@ import android.app.Dialog;
 import android.content.Context;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -19,9 +20,9 @@ import android.widget.TextView;
  * パッチ設定画面。XML も新規 Activity も使わず、コードだけで組み立てた
  * 全画面 Dialog。
  *
- * <p>ヘッダはアプリのテーマ色(#FFDD00)のバーに「←」と「パッチ設定」。
- * 本体はパッチ1件につき1行(スイッチ + 名前 + 説明)で、行間に細い区切り線。
- * ダークモードだけは3択なので、スイッチの代わりに現在値を出す選択行。
+ * <p>ヘッダは現在の実効テーマカラー（カスタムカラーまたは公式プリセット色）のバーに
+ * 「←」と「パッチ設定」。本体はパッチ1件につき1行(スイッチ + 名前 + 説明)で、行間に細い区切り線。
+ * ダークモード・テーマカラーは現在値を出す選択行。
  * フッタにパッチ版とクレジット。物理バックキーは Dialog 既定で閉じる。
  */
 public final class PatchSettingsDialog {
@@ -31,13 +32,12 @@ public final class PatchSettingsDialog {
 
     private static final int COLOR_WHITE = 0xFFFFFFFF;
     private static final int COLOR_BLACK = 0xFF000000;
-    private static final int COLOR_THEME_YELLOW = 0xFFFFDD00;
     private static final int COLOR_BLACK_WOOD = 0xFF232A37;
     private static final int COLOR_DESC_GRAY = 0xFF888888;
     private static final int COLOR_SEPARATOR = 0xFFE0E0E0;
     private static final int COLOR_ROW_SEPARATOR = 0xFFE8E8E8;
 
-    private static int dp(Context ctx, int value) {
+    static int dp(Context ctx, int value) {
         return (int) (ctx.getResources().getDisplayMetrics().density * value);
     }
 
@@ -79,6 +79,96 @@ public final class PatchSettingsDialog {
                 value);
         row.setClickable(true);
         row.setOnClickListener(listener);
+        return row;
+    }
+
+    /** ヘッダーバーの背景色・文字色を現在の実効テーマカラーに合わせる。 */
+    static void applyHeaderTheme(
+            Context ctx, View header, TextView back, TextView title) {
+        int bg = PatchThemeColor.resolveEffectiveColor(ctx);
+        int fg = PatchThemeColor.onPrimaryColor(bg);
+        header.setBackgroundColor(bg);
+        PatchColorPickerView.disableForceDark(header);
+        back.setTextColor(fg);
+        title.setTextColor(fg);
+    }
+
+    /**
+     * テーマカラーの自由選択行を追加する。右側に丸い色見本と現在値（#RRGGBB または公式色名）を表示し、
+     * タップでカラーピッカーを開いてヘッダーや背後画面へも即時反映する。
+     */
+    private static LinearLayout addThemeColorRow(
+            final Context ctx,
+            LinearLayout parent,
+            final View header,
+            final TextView back,
+            final TextView headerTitle) {
+        LinearLayout trailing = new LinearLayout(ctx);
+        trailing.setOrientation(LinearLayout.HORIZONTAL);
+        trailing.setGravity(Gravity.CENTER_VERTICAL);
+        trailing.setPadding(dp(ctx, 8), 0, 0, 0);
+
+        final View swatch = new View(ctx);
+        PatchColorPickerView.disableForceDark(swatch);
+        int swatchSize = dp(ctx, 20);
+        trailing.addView(swatch, new LinearLayout.LayoutParams(swatchSize, swatchSize));
+
+        final TextView label = new TextView(ctx);
+        label.setTextColor(COLOR_BLACK_WOOD);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.0f);
+        label.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL);
+        LinearLayout.LayoutParams labelLp =
+                new LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT);
+        labelLp.leftMargin = dp(ctx, 8);
+        trailing.addView(label, labelLp);
+
+        final Runnable refreshTrailing = new Runnable() {
+            @Override
+            public void run() {
+                int eff = PatchThemeColor.resolveEffectiveColor(ctx);
+                GradientDrawable dot = new GradientDrawable();
+                dot.setShape(GradientDrawable.OVAL);
+                dot.setColor(eff);
+                dot.setStroke(Math.max(1, dp(ctx, 1)), 0x33000000);
+                swatch.setBackground(dot);
+                label.setText(PatchThemeColor.currentStatusLabel(ctx));
+                applyHeaderTheme(ctx, header, back, headerTitle);
+            }
+        };
+        refreshTrailing.run();
+
+        LinearLayout row = addRow(ctx, parent,
+                "テーマカラー",
+                "カラーピッカーまたは HEX コードで任意のテーマカラーを設定します。"
+                        + "公式のカラー変更とも連動します。",
+                trailing);
+        row.setClickable(true);
+        row.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                int initColor = PatchThemeColor.resolveEffectiveColor(ctx);
+                PatchColorPickerDialog.show(
+                        ctx,
+                        initColor,
+                        PatchPrefs.customThemeEnabled,
+                        "適用",
+                        new PatchColorPickerDialog.Callback() {
+                            @Override
+                            public void onColorSelected(int color) {
+                                PatchPrefs.setCustomThemeColor(ctx, color);
+                                refreshTrailing.run();
+                                PatchThemeColor.broadcastColorChanged();
+                            }
+
+                            @Override
+                            public void onResetToPreset() {
+                                PatchPrefs.setCustomThemeEnabled(ctx, false);
+                                refreshTrailing.run();
+                                PatchThemeColor.broadcastColorChanged();
+                            }
+                        });
+            }
+        });
         return row;
     }
 
@@ -136,17 +226,15 @@ public final class PatchSettingsDialog {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(COLOR_WHITE);
 
-        // --- ヘッダーバー (高さ 56dp, テーマ色) ---
+        // --- ヘッダーバー (高さ 56dp, 実効テーマ色) ---
         int headerHeight = dp(ctx, 56);
         LinearLayout header = new LinearLayout(ctx);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setBackgroundColor(COLOR_THEME_YELLOW);
         header.setLayoutParams(new LinearLayout.LayoutParams(MATCH_PARENT, headerHeight));
 
         TextView back = new TextView(ctx);
         back.setText("←");
-        back.setTextColor(COLOR_BLACK_WOOD);
         back.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24.0f);
         back.setClickable(true);
         back.setGravity(Gravity.CENTER);
@@ -155,11 +243,12 @@ public final class PatchSettingsDialog {
 
         TextView title = new TextView(ctx);
         title.setText("パッチ設定");
-        title.setTextColor(COLOR_BLACK_WOOD);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18.0f);
         title.setTypeface(null, Typeface.BOLD);
         title.setGravity(Gravity.CENTER);
         title.setLayoutParams(new LinearLayout.LayoutParams(0, MATCH_PARENT, 1.0f));
+
+        applyHeaderTheme(ctx, header, back, title);
 
         // 「←」と左右対称にするための右スペーサー
         View headerSpacer = new View(ctx);
@@ -194,6 +283,7 @@ public final class PatchSettingsDialog {
                 "Firebase Analytics / Crashlytics / Performance と広告 ID の送信をブロック。（アプリ通知は維持）",
                 PatchPrefs.KEY_TELEMETRY);
         addDarkModeRow(ctx, content);
+        addThemeColorRow(ctx, content, header, back, title);
         LinearLayout checkinRow = addRow(ctx, content,
                 "時間外チェックイン",
                 "受付時間外でもチェックインボタンを押せるようにし、確認後にチェックイン。（既定オフ）",

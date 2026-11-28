@@ -56,6 +56,9 @@ REL_MENU = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "MenuFragm
 REL_TABHOST = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "MainTabHostFragment.smali")
 REL_HOME = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "HomeFragment.smali")
 REL_FCM = os.path.join("vn", "com", "bravesoft", "androidapp", "service", "MyFirebaseMessagingService.smali")
+REL_THEMEUTILS = os.path.join("vn", "com", "bravesoft", "androidapp", "utils", "ThemeUtils.smali")
+REL_CHANGECOLORDIALOG = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "ChangeColorDialog.smali")
+REL_NOTICE = os.path.join("vn", "com", "bravesoft", "androidapp", "ui", "NoticeFragment.smali")
 
 # マーカー(冪等判定)
 M_TOAST = "# domico-patch: gated login-toast click-through"
@@ -69,6 +72,9 @@ M_CHECKIN_CONFIRM = "# domico-patch: out-of-time check-in confirm gate"
 M_CHECKIN_BYPASS = "# domico-patch: E1015 bypass interceptor"
 M_AUTOCHECKIN_FIRE = "# domico-patch: auto check-in fire on showUICheckIn"
 M_PUSHLOG = "# domico-patch: dump push payload to on-device file (gated)"
+M_THEMEUTILS = "# domico-patch: custom theme color"
+M_CHANGEDIALOG = "# domico-patch: custom color swatch & hook in ChangeColorDialog"
+M_THEMENOTICE = "# domico-patch: custom theme color on notice tabs"
 
 
 def log(m):
@@ -664,6 +670,248 @@ def patch_pushlog(base_dir, check_only):
     return True, True, "injected PatchPushDump.dump into onMessageReceived"
 
 
+# ---- patch 12: ThemeUtils custom theme color -------------------------------
+
+CHECK_CTX_RE = re.compile(
+    r"^(\s*)invoke-static\s*\{p1,\s*(v\d+)\}\,\s*"
+    r"Lkotlin/jvm/internal/Intrinsics;->checkNotNullParameter"
+    r"\(Ljava/lang/Object;Ljava/lang/String;\)V\s*$"
+)
+GET_THEMEID_RE = re.compile(
+    r"^(\s*)invoke-virtual\s*\{[vp]\d+\}\,\s*"
+    r"Lvn/com/bravesoft/androidapp/helper/UserCtrl;->getThemeId\(\)I\s*$"
+)
+PKG_THEME = "Lvn/com/bravesoft/androidapp/patch/PatchThemeColor;"
+CSL_DESC = "Landroid/content/res/ColorStateList;"
+
+# (method_name, return_desc, fallback_if_zero)
+THEME_CTX_METHODS = [
+    ("getColor", "I", False),
+    ("getColorBottomBar", "I", False),
+    ("getBackgroundColor", "I", False),
+    ("buttonBgColor", CSL_DESC, False),
+    ("buttonTextColor", "I", False),
+    ("buttonIconColor", "I", False),
+    ("buttonCancel", "I", True),
+    ("buttonCancelLabelColor", "I", False),
+    ("getBgMessageChat", CSL_DESC, False),
+    ("getColorMessageChat", "I", False),
+]
+
+# (method_name, preview_helper_name)
+THEME_PREVIEW_METHODS = [
+    ("getBtnBackground", "getPreviewColor"),
+    ("buttonTextColorV2", "getPreviewTextColor"),
+]
+
+THEME_REMAP_METHODS = [
+    "buttonFavoriteBg",
+    "getIconEditTemplate",
+    "getIconRemoveTemplate",
+]
+
+
+def patch_themeutils(base_dir, check_only):
+    _root, path = find_smali_dir(base_dir, REL_THEMEUTILS)
+    if not path:
+        return False, False, "ThemeUtils.smali not found"
+    lines = read_lines(path)
+    if M_THEMEUTILS in "".join(lines):
+        return True, False, "already patched - skipped"
+
+    hooked = 0
+
+    # 1) 単一 Context 引数メソッドの先頭ガード
+    for mname, ret_desc, fallback_zero in THEME_CTX_METHODS:
+        sig = f".method public final {mname}(Landroid/content/Context;){ret_desc}"
+        start, end = method_bounds(lines, sig)
+        if start is None or end is None:
+            return False, False, f"ThemeUtils.{mname} not found"
+        seg = lines[start : end + 1]
+        anchor = indent = scratch = None
+        for j, ln in enumerate(seg):
+            m = CHECK_CTX_RE.match(ln)
+            if m:
+                anchor, indent, scratch = j, m.group(1), m.group(2)
+                break
+        if anchor is None:
+            return False, False, f"checkNotNullParameter anchor not found in ThemeUtils.{mname}"
+        is_obj = ret_desc.startswith("L")
+        mv_op = "move-result-object" if is_obj else "move-result"
+        ret_op = "return-object" if is_obj else "return"
+        lbl = f":domico_theme_orig_{mname}"
+        marker = M_THEMEUTILS if hooked == 0 else f"{M_THEMEUTILS} ({mname})"
+        inj = [
+            f"{indent}{marker}\n",
+            f"{indent}sget-boolean {scratch}, Lvn/com/bravesoft/androidapp/patch/PatchPrefs;->customThemeEnabled:Z\n",
+            f"{indent}if-eqz {scratch}, {lbl}\n",
+            f"{indent}invoke-static {{p1}}, {PKG_THEME}->{mname}(Landroid/content/Context;){ret_desc}\n",
+            f"{indent}{mv_op} {scratch}\n",
+        ]
+        if fallback_zero:
+            inj.append(f"{indent}if-eqz {scratch}, {lbl}\n")
+        inj += [
+            f"{indent}{ret_op} {scratch}\n",
+            f"{indent}{lbl}\n",
+        ]
+        if not check_only:
+            seg[anchor + 1 : anchor + 1] = inj
+            lines[start : end + 1] = seg
+        hooked += 1
+
+    # 2) ChangeColorDialog プレビュー用の (Context, int) -> int メソッド
+    for mname, helper in THEME_PREVIEW_METHODS:
+        sig = f".method public final {mname}(Landroid/content/Context;I)I"
+        start, end = method_bounds(lines, sig)
+        if start is None or end is None:
+            return False, False, f"ThemeUtils.{mname}(Context, I) not found"
+        seg = lines[start : end + 1]
+        anchor = indent = scratch = None
+        for j, ln in enumerate(seg):
+            m = CHECK_CTX_RE.match(ln)
+            if m:
+                anchor, indent, scratch = j, m.group(1), m.group(2)
+                break
+        if anchor is None:
+            return False, False, f"checkNotNullParameter anchor not found in ThemeUtils.{mname}"
+        lbl = f":domico_theme_orig_{mname}"
+        inj = [
+            f"{indent}{M_THEMEUTILS} ({mname})\n",
+            f"{indent}const/16 {scratch}, -0x64\n",
+            f"{indent}if-ne p2, {scratch}, {lbl}\n",
+            f"{indent}invoke-static {{}}, {PKG_THEME}->{helper}()I\n",
+            f"{indent}move-result {scratch}\n",
+            f"{indent}return {scratch}\n",
+            f"{indent}{lbl}\n",
+        ]
+        if not check_only:
+            seg[anchor + 1 : anchor + 1] = inj
+            lines[start : end + 1] = seg
+        hooked += 1
+
+    # 3) プリセット別 PNG セレクタ等を返すメソッドの themeId リマップ
+    for mname in THEME_REMAP_METHODS:
+        sig = f".method public final {mname}(Landroid/content/Context;)I"
+        start, end = method_bounds(lines, sig)
+        if start is None or end is None:
+            return False, False, f"ThemeUtils.{mname} not found"
+        seg = lines[start : end + 1]
+        gt_idx = indent = res_reg = None
+        for j, ln in enumerate(seg):
+            m = GET_THEMEID_RE.match(ln)
+            if m:
+                indent = m.group(1)
+                for k in range(j + 1, min(j + 6, len(seg))):
+                    mr = re.match(r"^\s*move-result\s+([vp]\d+)\s*$", seg[k])
+                    if mr:
+                        gt_idx, res_reg = k, mr.group(1)
+                        break
+                break
+        if gt_idx is None:
+            return False, False, f"UserCtrl->getThemeId() move-result not found in ThemeUtils.{mname}"
+        inj = [
+            f"{indent}{M_THEMEUTILS} ({mname})\n",
+            f"{indent}invoke-static {{{res_reg}}}, {PKG_THEME}->remapPresetThemeId(I)I\n",
+            f"{indent}move-result {res_reg}\n",
+        ]
+        if not check_only:
+            seg[gt_idx + 1 : gt_idx + 1] = inj
+            lines[start : end + 1] = seg
+        hooked += 1
+
+    if check_only:
+        return True, False, f"would hook {hooked} ThemeUtils method(s) [dry-run]"
+    write_lines(path, lines)
+    return True, True, f"hooked {hooked} ThemeUtils method(s) for custom theme color"
+
+
+# ---- patch 13: ChangeColorDialog custom swatch & hook ----------------------
+
+def patch_changecolordialog(base_dir, check_only):
+    _root, path = find_smali_dir(base_dir, REL_CHANGECOLORDIALOG)
+    if not path:
+        return False, False, "ChangeColorDialog.smali not found"
+    lines = read_lines(path)
+    start, end = method_bounds(
+        lines, ".method public onViewCreated(Landroid/view/View;Landroid/os/Bundle;)V"
+    )
+    if start is None or end is None:
+        return False, False, "ChangeColorDialog.onViewCreated not found"
+    if M_CHANGEDIALOG in "".join(lines[start : end + 1]):
+        return True, False, "already patched - skipped"
+    ret_idx = None
+    indent = "    "
+    for j in range(end, start, -1):
+        m = re.match(r"^(\s*)return-void\s*$", lines[j])
+        if m:
+            ret_idx, indent = j, m.group(1)
+            break
+    if ret_idx is None:
+        return False, False, "return-void not found in ChangeColorDialog.onViewCreated"
+    if check_only:
+        return True, False, "would inject PatchChangeColorHook.install [dry-run]"
+    # 非 static + 2 引数 = 3 param regs。スクラッチ v0 のため locals>=1 / registers>=4 を保証。
+    for j in range(start, end + 1):
+        m = REGDIRECTIVE_RE.match(lines[j])
+        if m:
+            kind, n = m.group(2), int(m.group(3))
+            if kind == "locals" and n < 1:
+                lines[j] = f"{m.group(1)}.locals 1\n"
+            elif kind == "registers" and n < 4:
+                lines[j] = f"{m.group(1)}.registers 4\n"
+            break
+    inj = [
+        f"{indent}{M_CHANGEDIALOG}\n",
+        f"{indent}iget-object v0, p0, Lvn/com/bravesoft/androidapp/ui/ChangeColorDialog;->binding:Lvn/com/bravesoft/androidapp/databinding/DialogChangeThemeColorBinding;\n",
+        f"{indent}invoke-static {{p0, v0}}, Lvn/com/bravesoft/androidapp/patch/PatchChangeColorHook;->install(Lvn/com/bravesoft/androidapp/ui/ChangeColorDialog;Lvn/com/bravesoft/androidapp/databinding/DialogChangeThemeColorBinding;)V\n",
+    ]
+    lines[ret_idx:ret_idx] = inj
+    write_lines(path, lines)
+    return True, True, "injected PatchChangeColorHook.install into ChangeColorDialog"
+
+
+# ---- patch 14: NoticeFragment custom tab colors ----------------------------
+
+def patch_noticefragment_theme(base_dir, check_only):
+    _root, path = find_smali_dir(base_dir, REL_NOTICE)
+    if not path:
+        return False, False, "NoticeFragment.smali not found"
+    lines = read_lines(path)
+    start, end = method_bounds(lines, ".method protected init(Landroid/view/View;)V")
+    if start is None or end is None:
+        return False, False, "NoticeFragment.init(View) not found"
+    if M_THEMENOTICE in "".join(lines[start : end + 1]):
+        return True, False, "already patched - skipped"
+    ret_idx = None
+    indent = "    "
+    for j in range(end, start, -1):
+        m = re.match(r"^(\s*)return-void\s*$", lines[j])
+        if m:
+            ret_idx, indent = j, m.group(1)
+            break
+    if ret_idx is None:
+        return False, False, "return-void not found in NoticeFragment.init"
+    if check_only:
+        return True, False, "would inject PatchThemeColor.applyNoticeTabs [dry-run]"
+    for j in range(start, end + 1):
+        m = REGDIRECTIVE_RE.match(lines[j])
+        if m:
+            kind, n = m.group(2), int(m.group(3))
+            if kind == "locals" and n < 1:
+                lines[j] = f"{m.group(1)}.locals 1\n"
+            elif kind == "registers" and n < 3:
+                lines[j] = f"{m.group(1)}.registers 3\n"
+            break
+    inj = [
+        f"{indent}{M_THEMENOTICE}\n",
+        f"{indent}iget-object v0, p0, Lvn/com/bravesoft/androidapp/ui/NoticeFragment;->binding:Lvn/com/bravesoft/androidapp/databinding/NoticePagerLayoutBinding;\n",
+        f"{indent}invoke-static {{v0}}, {PKG_THEME}->applyNoticeTabs(Lvn/com/bravesoft/androidapp/databinding/NoticePagerLayoutBinding;)V\n",
+    ]
+    lines[ret_idx:ret_idx] = inj
+    write_lines(path, lines)
+    return True, True, "injected PatchThemeColor.applyNoticeTabs into NoticeFragment"
+
+
 # ---- driver ----------------------------------------------------------------
 
 # (名前, 関数, 対象クラスの相対 smali パス)。
@@ -682,6 +930,9 @@ PATCHES = [
     ("checkin", patch_homefragment_checkin, REL_HOME),
     ("checkin-auto", patch_homefragment_autocheckin, REL_HOME),
     ("pushlog", patch_pushlog, REL_FCM),
+    ("theme-utils", patch_themeutils, REL_THEMEUTILS),
+    ("theme-dialog", patch_changecolordialog, REL_CHANGECOLORDIALOG),
+    ("theme-notice", patch_noticefragment_theme, REL_NOTICE),
 ]
 
 

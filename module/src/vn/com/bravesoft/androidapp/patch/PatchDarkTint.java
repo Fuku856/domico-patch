@@ -568,8 +568,16 @@ final class PatchDarkTint {
 
     // ---- 判定と色計算 -------------------------------------------------------------
 
+    /** カスタムテーマカラー変更時に色判定キャッシュを破棄する。 */
+    static void onThemeColorChanged() {
+        sColorInfo.clear();
+    }
+
     /** 色の種別と反転後の明度。色ごとに1回だけ計算する。 */
     static int info(int color) {
+        if (PatchPrefs.customThemeEnabled && PatchThemeColor.isProtectedAccentColor(color)) {
+            return (50 << 4) | K_ACCENT;
+        }
         int i = sColorInfo.indexOfKey(color);
         if (i >= 0) {
             return sColorInfo.valueAt(i);
